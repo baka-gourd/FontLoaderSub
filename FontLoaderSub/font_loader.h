@@ -22,6 +22,10 @@ typedef struct {
 typedef struct {
   allocator_t *alloc;
   str_db_t sub_font;
+  // List of already processed subtitle file paths (NUL-separated strings).
+  // Used to avoid double-counting and re-parsing when incremental loads
+  // include previously processed files (e.g. dropping a folder after a file).
+  str_db_t loaded_sub_files;
   str_db_t font_path;
   str_db_t walk_path;
   FS_Set *font_set;
@@ -54,6 +58,8 @@ int fl_scan_fonts(
 int fl_save_cache(FL_LoaderCtx *c, const wchar_t *cache);
 
 int fl_load_fonts(FL_LoaderCtx *c);
+
+int fl_load_fonts_incremental(FL_LoaderCtx *c);
 
 int fl_unload_fonts(FL_LoaderCtx *c);
 

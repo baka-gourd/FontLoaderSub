@@ -19,6 +19,7 @@ int fl_init(FL_LoaderCtx *c, allocator_t *alloc) {
   do {
     vec_init(&c->loaded_font, sizeof(FL_FontMatch), alloc);
     str_db_init(&c->sub_font, alloc, 0, 1);
+    str_db_init(&c->loaded_sub_files, alloc, 0, 1);
     str_db_init(&c->font_path, alloc, 0, 0);
     str_db_init(&c->walk_path, alloc, 0, 0);
 
@@ -45,11 +46,30 @@ int fl_free(FL_LoaderCtx *c) {
   BCryptCloseAlgorithmProvider(c->hash_alg, 0);
   vec_free(&c->loaded_font);
   str_db_free(&c->sub_font);
+  str_db_free(&c->loaded_sub_files);
   str_db_free(&c->font_path);
   str_db_free(&c->walk_path);
   fs_free(c->font_set);
 
   return FL_OK;
+}
+
+static int fl_is_sub_file_loaded(FL_LoaderCtx *c, const wchar_t *filePath) {
+  const wchar_t *data = (const wchar_t *)str_db_get(&c->loaded_sub_files, 0);
+  size_t totalLen = str_db_tell(&c->loaded_sub_files);
+  for (size_t pos = 0; pos < totalLen;) {
+    const wchar_t *loadedPath = data + pos;
+    size_t len = wcslen(loadedPath);
+    if (len > 0 && _wcsicmp(filePath, loadedPath) == 0) {
+      return 1;
+    }
+    pos += len + 1;
+  }
+  return 0;
+}
+
+static int fl_add_sub_file_loaded(FL_LoaderCtx *c, const wchar_t *filePath) {
+  return str_db_push_u16_le(&c->loaded_sub_files, filePath, 0) != NULL;
 }
 
 int fl_cancel(FL_LoaderCtx *c) {
@@ -93,9 +113,17 @@ static int fl_sub_font_callback(const wchar_t *font, size_t cch, void *arg) {
 static int
 fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   FL_LoaderCtx *c = arg;
-  const int r = fl_check_cancel(c);
-  if (r != FL_OK)
-    return r;
+  // NOTE: don't name this variable `r`.
+  // Some Windows/CRT environments may macro-substitute short identifiers,
+  // which breaks assignment and triggers C2166/C2106 on MSVC.
+  const int fl_rc = fl_check_cancel(c);
+  if (fl_rc != FL_OK)
+    return fl_rc;
+
+  // Deduplicate per subtitle file. This is required for correct incremental
+  // counting when a folder drop contains already-processed files.
+  if (fl_is_sub_file_loaded(c, path))
+    return FL_OK;
 
   const size_t len = ass_strlen(path);
   const wchar_t *ext = path + len - 4;
@@ -112,24 +140,33 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   memmap_t map;
   wchar_t *content = NULL;
   size_t cch = 0;
-  do {
-    FlMemMap(path, &map);
-    if (!map.data)
-      break;
-    content = FlTextDecode(map.data, map.size, &cch, c->alloc);
-    if (content == NULL)
-      break;
 
-    c->num_sub++;
-    ass_process_data(content, cch, fl_sub_font_callback, c);
+  FlMemMap(path, &map);
+  if (!map.data) {
+    // ignore error
+    return FL_OK;
+  }
 
-    if (MOCK_DELAY_SUB)
-      Sleep(MOCK_DELAY_SUB);
-  } while (0);
+  content = FlTextDecode(map.data, map.size, &cch, c->alloc);
+  if (content == NULL) {
+    // ignore error
+    FlMemUnmap(&map);
+    return FL_OK;
+  }
+
+  if (!fl_add_sub_file_loaded(c, path)) {
+    FlMemUnmap(&map);
+    c->alloc->alloc(content, 0, c->alloc->arg);
+    return FL_OUT_OF_MEMORY;
+  }
+
+  c->num_sub++;
+  ass_process_data(content, cch, fl_sub_font_callback, c);
+  if (MOCK_DELAY_SUB)
+    Sleep(MOCK_DELAY_SUB);
 
   FlMemUnmap(&map);
   c->alloc->alloc(content, 0, c->alloc->arg);
-
   return FL_OK;
 }
 
@@ -595,6 +632,91 @@ int fl_load_fonts(FL_LoaderCtx *c) {
       } while (r != FL_OUT_OF_MEMORY && num_loaded <= 16 && fs_iter_next(&it));
       if (num_dup == num_total) {
         // FL_FontMatch m = {.flag = FL_LOAD_DUP, .face = face};
+        FL_FontMatch m;
+        FL_FontMatch *data = c->loaded_font.data;
+        FL_FontMatch *ref = &data[dup_candidate];
+        m.flag = FL_LOAD_DUP | data[dup_candidate].flag;
+        m.face = face;
+        m.filename = ref->filename;
+        vec_append(&c->loaded_font, &m, 1);
+      }
+    }
+  }
+  tim_sort(
+      c->loaded_font.data, c->loaded_font.n, c->loaded_font.size, c->alloc,
+      fl_load_rec_sort, NULL);
+
+  return FL_OK;
+}
+
+int fl_load_fonts_incremental(FL_LoaderCtx *c) {
+  // Incremental font loading: don't reset counters, only load new fonts
+  // This is used when adding new subtitle files after initial load
+
+  int r = FL_OK;
+  // NOTE: Don't reset counters here, unlike fl_load_fonts
+
+  // pass 1: scan for existing fonts (skip already loaded ones)
+  size_t pos_it = 0;
+  const wchar_t *face;
+  while (r == FL_OK && (face = str_db_next(&c->sub_font, &pos_it)) != NULL) {
+    if ((r = fl_check_cancel(c)) != FL_OK)
+      return r;
+
+    // Skip if already loaded
+    if (fl_face_loaded(c, face))
+      continue;
+
+    if (IsFontInstalled(face)) {
+      if (vec_prealloc(&c->loaded_font, 1) == 0)
+        r = FL_OUT_OF_MEMORY;
+      if (r == FL_OK) {
+        FL_FontMatch m;
+        m.flag = FL_OS_LOADED;
+        m.face = face;
+        m.filename = NULL;
+        vec_append(&c->loaded_font, &m, 1);
+      }
+    }
+  }
+
+  // pass 2: load the missing font
+  const size_t sys_fonts = c->loaded_font.n;
+  pos_it = 0;
+  while (r != FL_OUT_OF_MEMORY &&
+         (face = str_db_next(&c->sub_font, &pos_it)) != NULL) {
+    if (fl_face_loaded(c, face))
+      continue;
+    if (vec_prealloc(&c->loaded_font, 1) == 0) {
+      r = FL_OUT_OF_MEMORY;
+      break;
+    }
+
+    FS_Iter it;
+    if (!fs_iter_new(c->font_set, face, &it)) {
+      FL_FontMatch m;
+      m.flag = FL_LOAD_MISS;
+      m.face = face;
+      m.filename = NULL;
+      vec_append(&c->loaded_font, &m, 1);
+      c->num_font_unmatched++;
+    } else {
+      int num_loaded = 0;
+      int num_dup = 0;
+      int num_total = 0;
+      int dup_candidate = 0;
+      do {
+        if ((r = fl_check_cancel(c)) != FL_OK)
+          return r;
+
+        r = fl_load_file(c, face, it.info.tag, &dup_candidate);
+        num_total++;
+        if (r == FL_DUP)
+          num_dup++;
+        if (r == FL_OK)
+          num_loaded++;
+      } while (r != FL_OUT_OF_MEMORY && num_loaded <= 16 && fs_iter_next(&it));
+      if (num_dup == num_total) {
         FL_FontMatch m;
         FL_FontMatch *data = c->loaded_font.data;
         FL_FontMatch *ref = &data[dup_candidate];

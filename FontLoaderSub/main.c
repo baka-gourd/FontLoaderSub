@@ -10,6 +10,46 @@
 
 #define kCacheFile L"fc-subs.db"
 #define kBlackFile L"fc-ignore.txt"
+#define kMessageWindowClass L"FontLoaderSubMessageWindow"
+
+static DWORD WINAPI AppWorker(LPVOID param);
+static LRESULT CALLBACK DoneDialogSubclassProc(
+    HWND hWnd,
+    UINT uMsg,
+    WPARAM wParam,
+    LPARAM lParam,
+    UINT_PTR uIdSubclass,
+    DWORD_PTR dwRefData);
+
+static int IsSubtitleFileLoaded(FL_AppCtx *c, const wchar_t *filePath) {
+  wchar_t fullPath[MAX_PATH * 2];
+  if (GetFullPathName(filePath, _countof(fullPath), fullPath, NULL) == 0) {
+    return 0;
+  }
+
+  const wchar_t *data = (const wchar_t *)str_db_get(&c->loaded_subs, 0);
+  size_t totalLen = str_db_tell(&c->loaded_subs);
+
+  for (size_t pos = 0; pos < totalLen;) {
+    const wchar_t *loadedPath = data + pos;
+    size_t len = wcslen(loadedPath);
+    if (len > 0 && _wcsicmp(fullPath, loadedPath) == 0) {
+      return 1;
+    }
+    pos += len + 1;
+  }
+
+  return 0;
+}
+
+static int AddSubtitleFileToLoaded(FL_AppCtx *c, const wchar_t *filePath) {
+  wchar_t fullPath[MAX_PATH * 2];
+  if (GetFullPathName(filePath, _countof(fullPath), fullPath, NULL) == 0) {
+    return 0;
+  }
+
+  return str_db_push_u16_le(&c->loaded_subs, fullPath, 0) != NULL;
+}
 
 static void *mem_realloc(void *existing, size_t size, void *arg) {
   HANDLE heap = (HANDLE)arg;
@@ -21,6 +61,158 @@ static void *mem_realloc(void *existing, size_t size, void *arg) {
     return HeapAlloc(heap, HEAP_ZERO_MEMORY, size);
   }
   return HeapReAlloc(heap, HEAP_ZERO_MEMORY, existing, size);
+}
+
+static LRESULT CALLBACK
+MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+  FL_AppCtx *c = (FL_AppCtx *)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+
+  switch (uMsg) {
+  case WM_CREATE:
+    return 0;
+  case WM_DROPFILES:
+    if (c && c->app_state == APP_DONE) {
+      HDROP hDrop = (HDROP)wParam;
+      UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, NULL, 0);
+      int has_new_files = 0;
+
+      for (UINT i = 0; i < fileCount; i++) {
+        UINT fileNameLen = DragQueryFile(hDrop, i, NULL, 0);
+        if (fileNameLen > 0) {
+          wchar_t *fileName = (wchar_t *)HeapAlloc(
+              GetProcessHeap(), 0, (fileNameLen + 1) * sizeof(wchar_t));
+          if (fileName) {
+            DragQueryFile(hDrop, i, fileName, fileNameLen + 1);
+
+            // Check if subtitle file is already loaded
+            if (!IsSubtitleFileLoaded(c, fileName)) {
+              int r = fl_add_subs(&c->loader, fileName);
+              if (r == FL_OK) {
+                AddSubtitleFileToLoaded(c, fileName);
+                has_new_files = 1;
+              }
+            }
+
+            HeapFree(GetProcessHeap(), 0, fileName);
+          }
+        }
+      }
+      DragFinish(hDrop);
+
+      // Only reload if we have new files
+      if (has_new_files) {
+        // Load fonts for new subtitles only (don't unload existing fonts)
+        c->app_state = APP_LOAD_FONT;
+        c->incremental_load = 1;  // Use incremental loading
+        c->cancelled = 0;
+        c->req_exit = 0;
+
+        DWORD thread_id;
+        c->thread_load = CreateThread(NULL, 0, AppWorker, c, 0, &thread_id);
+        if (c->thread_load != NULL && c->work_hwnd) {
+          SendMessage(c->work_hwnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
+        }
+      }
+    }
+    return 0;
+  case WM_CLOSE:
+    DestroyWindow(hWnd);
+    return 0;
+  case WM_DESTROY:
+    PostQuitMessage(0);
+    return 0;
+  default:
+    return DefWindowProc(hWnd, uMsg, wParam, lParam);
+  }
+}
+
+// Subclass procedure for the done dialog to handle drag-drop
+static LRESULT CALLBACK DoneDialogSubclassProc(
+    HWND hWnd,
+    UINT uMsg,
+    WPARAM wParam,
+    LPARAM lParam,
+    UINT_PTR uIdSubclass,
+    DWORD_PTR dwRefData) {
+  FL_AppCtx *c = (FL_AppCtx *)dwRefData;
+
+  switch (uMsg) {
+  case WM_DROPFILES:
+    if (c && c->app_state == APP_DONE) {
+      HDROP hDrop = (HDROP)wParam;
+      UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, NULL, 0);
+      int has_new_files = 0;
+
+      for (UINT i = 0; i < fileCount; i++) {
+        UINT fileNameLen = DragQueryFile(hDrop, i, NULL, 0);
+        if (fileNameLen > 0) {
+          wchar_t *fileName = (wchar_t *)HeapAlloc(
+              GetProcessHeap(), 0, (fileNameLen + 1) * sizeof(wchar_t));
+          if (fileName) {
+            DragQueryFile(hDrop, i, fileName, fileNameLen + 1);
+
+            // Check if subtitle file is already loaded
+            if (!IsSubtitleFileLoaded(c, fileName)) {
+              int r = fl_add_subs(&c->loader, fileName);
+              if (r == FL_OK) {
+                AddSubtitleFileToLoaded(c, fileName);
+                has_new_files = 1;
+              }
+            }
+
+            HeapFree(GetProcessHeap(), 0, fileName);
+          }
+        }
+      }
+      DragFinish(hDrop);
+
+      // Only reload if we have new files
+      if (has_new_files) {
+        // Load fonts for new subtitles only (don't unload existing fonts)
+        c->app_state = APP_LOAD_FONT;
+        c->incremental_load = 1;  // Use incremental loading
+        c->cancelled = 0;
+        c->req_exit = 0;
+
+        // Disable drag-drop before navigating away
+        DragAcceptFiles(hWnd, FALSE);
+
+        DWORD thread_id;
+        c->thread_load = CreateThread(NULL, 0, AppWorker, c, 0, &thread_id);
+        if (c->thread_load != NULL) {
+          SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
+        }
+      }
+    }
+    return 0;
+  default:
+    break;
+  }
+
+  return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+}
+
+static int AppCreateMessageWindow(FL_AppCtx *c) {
+  WNDCLASSEXW wc = {0};
+  wc.cbSize = sizeof(WNDCLASSEXW);
+  wc.lpfnWndProc = MessageWindowProc;
+  wc.hInstance = c->hInst;
+  wc.lpszClassName = kMessageWindowClass;
+
+  if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+    return 0;
+  }
+
+  c->hwnd_message = CreateWindowExW(
+      0, kMessageWindowClass, L"FontLoaderSubMessageWindow", 0, 0, 0, 0, 0,
+      HWND_MESSAGE, NULL, c->hInst, NULL);
+
+  if (c->hwnd_message == NULL) {
+    return 0;
+  }
+
+  SetWindowLongPtr(c->hwnd_message, GWLP_USERDATA, (LONG_PTR)c);
+  return 1;
 }
 
 static void AppHelpUsage(FL_AppCtx *c, HWND hWnd) {
@@ -111,9 +303,15 @@ static DWORD WINAPI AppWorker(LPVOID param) {
     case APP_LOAD_SUB: {
       if (MOCK_SUB_PATH) {
         r = fl_add_subs(&c->loader, MOCK_SUB_PATH);
+        if (r == FL_OK) {
+          AddSubtitleFileToLoaded(c, MOCK_SUB_PATH);
+        }
       }
       for (int i = 1; i < c->argc && r == FL_OK; i++) {
         r = fl_add_subs(&c->loader, c->argv[i]);
+        if (r == FL_OK) {
+          AddSubtitleFileToLoaded(c, c->argv[i]);
+        }
       }
       c->app_state = APP_LOAD_CACHE;
       break;
@@ -137,7 +335,12 @@ static DWORD WINAPI AppWorker(LPVOID param) {
       break;
     }
     case APP_LOAD_FONT: {
-      r = fl_load_fonts(&c->loader);
+      if (c->incremental_load) {
+        r = fl_load_fonts_incremental(&c->loader);
+        c->incremental_load = 0;  // Reset flag
+      } else {
+        r = fl_load_fonts(&c->loader);
+      }
       if (r == FL_OK)
         c->app_state = APP_DONE;
       break;
@@ -282,6 +485,9 @@ static HRESULT CALLBACK DlgDoneButtonDispatch(
   case IDCANCEL:
   case IDCLOSE:
   case ID_BTN_RESCAN: {
+    // Disable drag-drop before navigating away
+    DragAcceptFiles(hWnd, FALSE);
+
     if (wParam != ID_BTN_RESCAN) {
       c->req_exit = 1;
     }
@@ -325,7 +531,9 @@ static HRESULT CALLBACK DlgDoneButtonDispatch(
     AppHelpUsage(c, hWnd);
     return S_FALSE;
   }
-  default: { return S_FALSE; }
+  default: {
+    return S_FALSE;
+  }
   }
 }
 
@@ -371,6 +579,16 @@ static HRESULT CALLBACK DlgDoneProc(
     // find the "Menu" button
     c->handle_btn_menu = NULL;
     EnumChildWindows(hWnd, DlgDoneFindMenuBtnCb, (LPARAM)c);
+
+    // Install subclass to handle drag-drop
+    SetWindowSubclass(hWnd, DoneDialogSubclassProc, 0, (DWORD_PTR)c);
+
+    // Enable drag-drop on the dialog
+    DragAcceptFiles(hWnd, TRUE);
+  } else if (uNotification == TDN_DESTROYED) {
+    // Remove subclass and disable drag-drop when dialog is destroyed
+    RemoveWindowSubclass(hWnd, DoneDialogSubclassProc, 0);
+    DragAcceptFiles(hWnd, FALSE);
   } else if (uNotification == TDN_HYPERLINK_CLICKED) {
     // the only URL is the github repo
     const WCHAR *url = L"https://github.com/yzwduck/FontLoaderSub";
@@ -471,9 +689,13 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->shortcut.sendto_str_id = IDS_SENDTO;
   c->shortcut.path = str_db_get(&c->full_exe_path, 0);
   c->app_state = APP_LOAD_SUB;
+  c->incremental_load = 0;  // Initialize flag
   if (fl_init(&c->loader, c->alloc) != FL_OK)
     return 0;
   str_db_init(&c->log, c->alloc, 0, 0);
+  // loaded_subs stores a list of NUL-terminated strings, so pad_len must be 1.
+  // (pad_len=0 is only suitable for building a single concatenated string.)
+  str_db_init(&c->loaded_subs, c->alloc, 0, 1);
   c->font_path = str_db_get(&c->full_exe_path, 0);
 
   if (MOCK_FONT_PATH)
@@ -481,6 +703,9 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
 
   c->evt_stop_cache = CreateEvent(NULL, TRUE, FALSE, NULL);
   if (c->evt_stop_cache == NULL)
+    return 0;
+
+  if (!AppCreateMessageWindow(c))
     return 0;
 
   if (SUCCEEDED(CoCreateInstance(
@@ -509,6 +734,19 @@ static int AppRun(FL_AppCtx *c) {
     fl_unload_fonts(&c->loader);
   }
   PostMessage(HWND_BROADCAST, WM_FONTCHANGE, 0, 0);
+
+  // Signal the message window to quit and destroy it
+  if (c->hwnd_message) {
+    PostMessage(c->hwnd_message, WM_CLOSE, 0, 0);
+  }
+
+  // Message loop for the hidden window
+  MSG msg;
+  while (GetMessage(&msg, NULL, 0, 0)) {
+    TranslateMessage(&msg);
+    DispatchMessage(&msg);
+  }
+
   return 0;
 }
 
@@ -536,6 +774,11 @@ int WINAPI _tWinMain(
     return 1;
   }
   AppRun(ctx);
+
+  if (ctx->hwnd_message) {
+    DestroyWindow(ctx->hwnd_message);
+    ctx->hwnd_message = NULL;
+  }
 
   return 0;
 }

@@ -37,6 +37,7 @@ typedef struct {
   str_db_t full_exe_path;
 
   HWND work_hwnd;
+  HWND hwnd_message;  // hidden message-only window for drag-drop
   HANDLE thread_load;
   HANDLE thread_cache;
   HANDLE evt_stop_cache;
@@ -49,4 +50,6 @@ typedef struct {
   int show_shortcut;
   FL_ShortCtx shortcut;
   ITaskbarList3 *taskbar_list3;
+  str_db_t loaded_subs;  // list of processed subtitle files
+  int incremental_load;  // flag for incremental font loading
 } FL_AppCtx;
