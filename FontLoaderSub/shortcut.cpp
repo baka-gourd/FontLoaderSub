@@ -1,8 +1,12 @@
 #include "shortcut.h"
 
+#include "shortcut.h"
+
 #include <Shlwapi.h>
 #include <ShlObj.h>
 #include <ObjIdl.h>
+
+#include <limits>
 
 #include "ass_string.h"
 #include "res/resource.h"
@@ -99,9 +103,14 @@ int ShortcutExplorerDirectory(
           !str_db_push_u16_le(&c->tmp, res_suffix, 0))
         break;
       const WCHAR *verb = str_db_get(&c->tmp, 0);
+      const size_t verb_bytes = str_db_tell(&c->tmp) * sizeof verb[0];
+      if (verb_bytes > (std::numeric_limits<DWORD>::max)()) {
+        ret = ERROR_MORE_DATA;
+        break;
+      }
       ret = RegSetValueEx(
           root, TEXT("MUIVerb"), 0, REG_SZ, (const BYTE *)verb,
-          str_db_tell(&c->tmp) * sizeof verb[0]);
+          static_cast<DWORD>(verb_bytes));
       if (ret != ERROR_SUCCESS)
         break;
 
@@ -117,9 +126,14 @@ int ShortcutExplorerDirectory(
           !str_db_push_u16_le(&c->tmp, L"\" \"%V\"", 0))
         break;
       const WCHAR *path = str_db_get(&c->tmp, 0);
+      const size_t path_bytes = str_db_tell(&c->tmp) * sizeof path[0];
+      if (path_bytes > (std::numeric_limits<DWORD>::max)()) {
+        ret = ERROR_MORE_DATA;
+        break;
+      }
       ret = RegSetValueEx(
           command, NULL, 0, REG_SZ, (const BYTE *)path,
-          str_db_tell(&c->tmp) * sizeof path[0]);
+          static_cast<DWORD>(path_bytes));
       if (ret != ERROR_SUCCESS)
         break;
       succ = 1;
@@ -236,13 +250,13 @@ static HRESULT CALLBACK DlgShortcutProc(
   case TDN_BUTTON_CLICKED: {
     if (BUTTON_ID_START <= wParam &&
         wParam < BUTTON_ID_START + FL_SHORTCUT_MAX) {
-      int id = wParam - BUTTON_ID_START;
+      int id = static_cast<int>(wParam - BUTTON_ID_START);
       int succ = kShortcutToggler[id](
           c, c->setup[id] ? SHORTCUT_MODE_DELETE : SHORTCUT_MODE_CREATE);
       // if (GetTickCount() / 1000 % 2 == 0) succ = 0;
       int err = c->setup[id] ? IDS_SHORTCUT_ERROR_DEL : IDS_SHORTCUT_ERROR_ADD;
       ShortcutRefresh(c, succ ? 0 : err);
-      c->dlg.nDefaultButton = wParam;
+      c->dlg.nDefaultButton = static_cast<int>(wParam);
       SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg);
       return S_FALSE;
     }

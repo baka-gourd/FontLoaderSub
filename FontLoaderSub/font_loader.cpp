@@ -3,15 +3,19 @@
 #include <Windows.h>
 #include <bcrypt.h>
 
+#include <climits>
 #include <cstring>
 #include <string>
 #include "ass_string.h"
 #include "ass_parser.h"
 #include "path.h"
 #include "mock_config.h"
-#include "tim_sort.h"
 #include "util.h"
 #include "utf.h"
+
+#include "absl/strings/string_view.h"
+
+#include <tlx/sort/parallel_mergesort.hpp>
 
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 
@@ -76,7 +80,7 @@ static int fl_is_sub_file_loaded(FL_LoaderCtx *c, const wchar_t *filePath) {
   size_t pos = 0;
   const char *loaded_path = NULL;
   while ((loaded_path = str8_db_next(&c->loaded_sub_files, &pos)) != NULL) {
-    if (std::strcmp(loaded_path, needle.c_str()) == 0)
+    if (absl::string_view(loaded_path) == needle)
       return 1;
   }
   return 0;
@@ -233,7 +237,7 @@ fl_walk_font_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
     // skip the base path + '\'
     const wchar_t *tag = path + str_db_tell(&c->font_path) + 1;
     std::string tag_u8;
-    if (Utf16ToUtf8(tag, wcslen(tag), &tag_u8)) {
+    if (Utf16ToUtf8(tag, &tag_u8)) {
       fs_add_font(c->font_set, tag_u8.c_str(), map.data, map.size);
     }
     FlMemUnmap(&map);
@@ -388,7 +392,7 @@ static int CALLBACK enum_fonts(
 static bool fl_utf8_to_utf16(const char *input, std::wstring *output) {
   if (input == NULL || output == NULL)
     return false;
-  return Utf8ToUtf16(input, std::strlen(input), output);
+  return Utf8ToUtf16(input, output);
 }
 
 static int IsFontInstalled(const char *face) {
@@ -420,7 +424,7 @@ static int fl_file_loaded(FL_LoaderCtx *c, const char *file) {
   for (size_t i = 0; i != c->loaded_font.n; i++) {
     FL_FontMatch *m = &data[i];
     if (m->filename == file)
-      return i;
+      return (i > static_cast<size_t>(INT_MAX)) ? -1 : (int)i;
   }
   return -1;
 }
@@ -432,9 +436,9 @@ static int fl_utf8_casecmp(const char *a, const char *b) {
     return 1;
   std::wstring wa;
   std::wstring wb;
-  if (!Utf8ToUtf16(a, std::strlen(a), &wa))
+  if (!Utf8ToUtf16(a, &wa))
     return -1;
-  if (!Utf8ToUtf16(b, std::strlen(b), &wb))
+  if (!Utf8ToUtf16(b, &wb))
     return 1;
   return FlStrCmpIW(wa.c_str(), wb.c_str());
 }
@@ -450,7 +454,7 @@ static int fl_hash_loaded(FL_LoaderCtx *c, const uint8_t hash[32]) {
         dif |= m->hash[j] ^ hash[j];
       }
       if (!dif)
-        return i;
+        return (i > static_cast<size_t>(INT_MAX)) ? -1 : (int)i;
     }
   }
   return -1;
@@ -465,6 +469,10 @@ fl_calc_hash(FL_LoaderCtx *c, const void *data, size_t size, uint8_t res[32]) {
   DWORD sz_hash_obj = 0;
   DWORD sz_data = 0;
   allocator_t *alloc = c->alloc;
+  if (size > static_cast<size_t>(ULONG_MAX)) {
+    return FL_OUT_OF_MEMORY;
+  }
+  const ULONG data_len = static_cast<ULONG>(size);
 
   do {
     status = BCryptGetProperty(
@@ -482,7 +490,7 @@ fl_calc_hash(FL_LoaderCtx *c, const void *data, size_t size, uint8_t res[32]) {
     if (!NT_SUCCESS(status))
       break;
 
-    status = BCryptHashData(hash, (PBYTE)data, size, 0);
+    status = BCryptHashData(hash, (PBYTE)data, data_len, 0);
     if (!NT_SUCCESS(status))
       break;
 
@@ -522,7 +530,7 @@ fl_load_file(FL_LoaderCtx *c, const char *face, const char *file, int *dup) {
     // check 2: hash
     str_db_seek(&c->walk_path, 0);
     std::wstring file_w;
-    if (!Utf8ToUtf16(file, std::strlen(file), &file_w)) {
+    if (!Utf8ToUtf16(file, &file_w)) {
       r = FL_OUT_OF_MEMORY;
       break;
     }
@@ -690,9 +698,13 @@ int fl_load_fonts(FL_LoaderCtx *c) {
       }
     }
   }
-  tim_sort(
-      c->loaded_font.data, c->loaded_font.n, c->loaded_font.size, c->alloc,
-      fl_load_rec_sort, NULL);
+  if (c->loaded_font.n > 1) {
+    FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
+    tlx::parallel_mergesort(
+        data, data + c->loaded_font.n, [](const FL_FontMatch &a, const FL_FontMatch &b) {
+          return fl_load_rec_sort(&a, &b, NULL) < 0;
+        });
+  }
 
   return FL_OK;
 }
@@ -775,9 +787,13 @@ int fl_load_fonts_incremental(FL_LoaderCtx *c) {
       }
     }
   }
-  tim_sort(
-      c->loaded_font.data, c->loaded_font.n, c->loaded_font.size, c->alloc,
-      fl_load_rec_sort, NULL);
+  if (c->loaded_font.n > 1) {
+    FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
+    tlx::parallel_mergesort(
+        data, data + c->loaded_font.n, [](const FL_FontMatch &a, const FL_FontMatch &b) {
+          return fl_load_rec_sort(&a, &b, NULL) < 0;
+        });
+  }
 
   return FL_OK;
 }
@@ -800,7 +816,7 @@ int fl_walk_loaded_fonts(FL_LoaderCtx *c, WalkLoadedCallback cb, void *param) {
     str_db_seek(&c->walk_path, pos);
     if (m->filename) {
       std::wstring file_w;
-      if (Utf8ToUtf16(m->filename, std::strlen(m->filename), &file_w) &&
+      if (Utf8ToUtf16(m->filename, &file_w) &&
           str_db_push_u16_le(&c->walk_path, file_w.c_str(), file_w.size())) {
         path = str_db_get(&c->walk_path, 0);
       }

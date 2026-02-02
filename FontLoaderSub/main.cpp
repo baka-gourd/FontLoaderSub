@@ -31,16 +31,12 @@ static int IsSubtitleFileLoaded(FL_AppCtx *c, const wchar_t *filePath) {
     return 0;
   }
 
-  const wchar_t *data = (const wchar_t *)str_db_get(&c->loaded_subs, 0);
-  size_t totalLen = str_db_tell(&c->loaded_subs);
-
-  for (size_t pos = 0; pos < totalLen;) {
-    const wchar_t *loadedPath = data + pos;
-    size_t len = wcslen(loadedPath);
-    if (len > 0 && _wcsicmp(fullPath, loadedPath) == 0) {
+  size_t pos = 0;
+  const wchar_t *loadedPath = NULL;
+  while ((loadedPath = str_db_next(&c->loaded_subs, &pos)) != NULL) {
+    if (CompareStringOrdinal(fullPath, -1, loadedPath, -1, TRUE) == CSTR_EQUAL) {
       return 1;
     }
-    pos += len + 1;
   }
 
   return 0;
@@ -83,21 +79,18 @@ MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
       for (UINT i = 0; i < fileCount; i++) {
         UINT fileNameLen = DragQueryFile(hDrop, i, NULL, 0);
         if (fileNameLen > 0) {
-          wchar_t *fileName = (wchar_t *)HeapAlloc(
-              GetProcessHeap(), 0, (fileNameLen + 1) * sizeof(wchar_t));
-          if (fileName) {
-            DragQueryFile(hDrop, i, fileName, fileNameLen + 1);
+          std::wstring fileName;
+          fileName.resize(fileNameLen + 1);
+          UINT written = DragQueryFile(hDrop, i, &fileName[0], fileNameLen + 1);
+          fileName.resize(written);
 
-            // Check if subtitle file is already loaded
-            if (!IsSubtitleFileLoaded(c, fileName)) {
-              int r = fl_add_subs(&c->loader, fileName);
-              if (r == FL_OK) {
-                AddSubtitleFileToLoaded(c, fileName);
-                has_new_files = 1;
-              }
+          // Check if subtitle file is already loaded
+          if (!IsSubtitleFileLoaded(c, fileName.c_str())) {
+            int r = fl_add_subs(&c->loader, fileName.c_str());
+            if (r == FL_OK) {
+              AddSubtitleFileToLoaded(c, fileName.c_str());
+              has_new_files = 1;
             }
-
-            HeapFree(GetProcessHeap(), 0, fileName);
           }
         }
       }
@@ -150,21 +143,18 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
       for (UINT i = 0; i < fileCount; i++) {
         UINT fileNameLen = DragQueryFile(hDrop, i, NULL, 0);
         if (fileNameLen > 0) {
-          wchar_t *fileName = (wchar_t *)HeapAlloc(
-              GetProcessHeap(), 0, (fileNameLen + 1) * sizeof(wchar_t));
-          if (fileName) {
-            DragQueryFile(hDrop, i, fileName, fileNameLen + 1);
+          std::wstring fileName;
+          fileName.resize(fileNameLen + 1);
+          UINT written = DragQueryFile(hDrop, i, &fileName[0], fileNameLen + 1);
+          fileName.resize(written);
 
-            // Check if subtitle file is already loaded
-            if (!IsSubtitleFileLoaded(c, fileName)) {
-              int r = fl_add_subs(&c->loader, fileName);
-              if (r == FL_OK) {
-                AddSubtitleFileToLoaded(c, fileName);
-                has_new_files = 1;
-              }
+          // Check if subtitle file is already loaded
+          if (!IsSubtitleFileLoaded(c, fileName.c_str())) {
+            int r = fl_add_subs(&c->loader, fileName.c_str());
+            if (r == FL_OK) {
+              AddSubtitleFileToLoaded(c, fileName.c_str());
+              has_new_files = 1;
             }
-
-            HeapFree(GetProcessHeap(), 0, fileName);
           }
         }
       }
@@ -247,14 +237,14 @@ static int AppBuildLog(FL_AppCtx *c) {
     else if (1 || m->flag & (FL_LOAD_MISS))
       tag = L"[??] ";
     std::wstring face_w;
-    if (m->face && !Utf8ToUtf16(m->face, std::strlen(m->face), &face_w))
+    if (m->face && !Utf8ToUtf16(m->face, &face_w))
       return 0;
     if (!str_db_push_u16_le(log, tag, 0) ||
         !str_db_push_u16_le(log, face_w.c_str(), face_w.size()))
       return 0;
     if (m->filename && !(m->flag & FL_LOAD_DUP)) {
       std::wstring file_w;
-      if (!Utf8ToUtf16(m->filename, std::strlen(m->filename), &file_w))
+      if (!Utf8ToUtf16(m->filename, &file_w))
         return 0;
       if (!str_db_push_u16_le(log, L" > ", 0) ||
           !str_db_push_u16_le(log, file_w.c_str(), file_w.size()))
@@ -662,15 +652,15 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->hInst = hInst;
   c->alloc = alloc;
 
-  memcpy(&c->dlg_work, &kDlgWorkTemplate, sizeof c->dlg_work);
+  c->dlg_work = kDlgWorkTemplate;
   c->dlg_work.hInstance = hInst;
   c->dlg_work.lpCallbackData = (LONG_PTR)c;
 
-  memcpy(&c->dlg_done, &kDlgDoneTemplate, sizeof c->dlg_done);
+  c->dlg_done = kDlgDoneTemplate;
   c->dlg_done.hInstance = hInst;
   c->dlg_done.lpCallbackData = (LONG_PTR)c;
 
-  memcpy(&c->dlg_help, &kDlgHelpTemplate, sizeof c->dlg_help);
+  c->dlg_help = kDlgHelpTemplate;
   c->dlg_help.hInstance = hInst;
   c->dlg_help.lpCallbackData = (LONG_PTR)c;
 

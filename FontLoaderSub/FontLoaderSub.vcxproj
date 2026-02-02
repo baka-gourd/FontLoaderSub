@@ -140,6 +140,7 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -155,7 +156,7 @@
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -177,6 +178,7 @@
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -200,6 +202,7 @@
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
+      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -226,7 +229,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -253,7 +256,7 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -294,10 +297,10 @@
     <ClCompile Include="exporter.cpp" />
     <ClCompile Include="font_loader.cpp" />
     <ClCompile Include="font_set.cpp" />
+    <ClCompile Include="..\third_party\tlx\tlx\algorithm\parallel_multiway_merge.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="shortcut.cpp" />
     <ClCompile Include="test.cpp" />
-    <ClCompile Include="tim_sort.cpp" />
     <ClCompile Include="ttf_parser.cpp" />
     <ClCompile Include="util.cpp" />
     <ClCompile Include="path.cpp" />
@@ -315,7 +318,6 @@
     <ClInclude Include="mock_config.h" />
     <ClInclude Include="res\resource.h" />
     <ClInclude Include="shortcut.h" />
-    <ClInclude Include="tim_sort.h" />
     <ClInclude Include="ttf_parser.h" />
     <ClInclude Include="util.h" />
     <ClInclude Include="path.h" />

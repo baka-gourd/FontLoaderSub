@@ -5,6 +5,8 @@
 #include "util.h"
 #include "utf.h"
 
+#include "absl/strings/string_view.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -384,7 +386,7 @@ int fs_iter_next(FS_Iter *it) {
     } else {
       if (got_ver == NULL)
         continue;
-      if (strcmp(ver, got_ver) != 0)
+      if (absl::string_view(ver) != got_ver)
         continue;
     }
 
@@ -523,7 +525,8 @@ int fs_blacklist_clear(FS_Set *s) {
 int fs_blacklist_add(FS_Set *s, const char *path, size_t cch) {
   if (s == NULL || path == NULL)
     return 1;
-  const size_t len = cch ? fs_strnlen(path, cch) : strlen(path);
+  const size_t len =
+      cch ? fs_strnlen(path, cch) : absl::string_view(path).size();
   if (len == 0)
     return 0;
   s->blacklist.emplace_back(path, len);
@@ -533,7 +536,7 @@ int fs_blacklist_add(FS_Set *s, const char *path, size_t cch) {
 int fs_blacklist_match(FS_Set *s, const char *path) {
   if (s == NULL || path == NULL)
     return 0;
-  const size_t len_path = strlen(path);
+  const size_t len_path = absl::string_view(path).size();
   for (const auto &suffix : s->blacklist) {
     const size_t len_suffix = suffix.size();
     if (len_suffix > len_path)

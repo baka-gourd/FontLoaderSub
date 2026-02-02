@@ -24,7 +24,12 @@ int FlResolvePath(const wchar_t *path, str_db_t *s) {
     }
     // allocate buffer
     str_db_seek(s, 0);
-    const DWORD space = vec_prealloc(&s->vec, size + MAX_PATH / 2);
+    const size_t space = vec_prealloc(&s->vec, size + MAX_PATH / 2);
+    if (space > static_cast<size_t>(MAXDWORD)) {
+      r = FL_OUT_OF_MEMORY;
+      break;
+    }
+    const DWORD space_dw = static_cast<DWORD>(space);
     if (space < size) {
       r = FL_OUT_OF_MEMORY;
       break;
@@ -32,7 +37,7 @@ int FlResolvePath(const wchar_t *path, str_db_t *s) {
     // get path
     wchar_t *buffer = (wchar_t *)str_db_get(s, 0);
     const DWORD cch =
-        GetFinalPathNameByHandle(handle, buffer, space, name_flags);
+        GetFinalPathNameByHandle(handle, buffer, space_dw, name_flags);
     if (cch == 0 || cch >= size) {
       r = FL_OS_ERROR;
       break;

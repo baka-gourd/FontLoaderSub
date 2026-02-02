@@ -1,3 +1,6 @@
 [submodule "vcpkg"]
 	path = vcpkg
 	url = https://github.com/microsoft/vcpkg
+[submodule "third_party/tlx"]
+	path = third_party/tlx
+	url = https://github.com/tlx/tlx

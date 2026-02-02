@@ -62,7 +62,7 @@ static HRESULT LFEC_NextOne(LoadedFontEnumCtx *c, IShellItem **item) {
     if (m->filename != NULL && (m->flag & FL_LOAD_DUP) == 0) {
       if (item != NULL) {
         std::wstring file_w;
-        if (!Utf8ToUtf16(m->filename, std::strlen(m->filename), &file_w))
+        if (!Utf8ToUtf16(m->filename, &file_w))
           return E_FAIL;
         return SHCreateItemFromRelativeName(
             c->root, file_w.c_str(), NULL, IID_IShellItem, (void **)item);

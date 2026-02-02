@@ -55,9 +55,6 @@
     <ClCompile Include="font_set.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="tim_sort.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="font_loader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -71,6 +68,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="exporter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\third_party\tlx\tlx\algorithm\parallel_multiway_merge.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="utf.cpp">
@@ -94,9 +94,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="cstl.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="tim_sort.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="font_loader.h">
