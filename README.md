@@ -22,3 +22,7 @@ Instead of font files, drag-and-drop ASS/SSA subtitles and it will load correspo
 * In order to work with huge font collections, font cache `fc-subs.db` will be built for fast lookup.
 * Only accept ASS/SSA files under 64MB, encoded in Unicode with BOM.
 * Windows 7 (or later) required.
+
+## Build
+
+vcpkg: zstd,spdlog,abseil,simdutf,flatbuffers; all in static link

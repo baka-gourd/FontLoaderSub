@@ -664,7 +664,7 @@ static HRESULT CALLBACK DlgDoneProc(
     DragAcceptFiles(hWnd, FALSE);
   } else if (uNotification == TDN_HYPERLINK_CLICKED) {
     // the only URL is the github repo
-    const WCHAR *url = L"https://github.com/yzwduck/FontLoaderSub";
+    const WCHAR *url = L"https://github.com/baka-gourd/FontLoaderSub";
     ShellExecute(NULL, NULL, url, NULL, NULL, SW_SHOW);
   } else if (uNotification == TDN_BUTTON_CLICKED) {
     return DlgDoneButtonDispatch(hWnd, uNotification, wParam, lParam, c);
