@@ -730,7 +730,7 @@ static TASKDIALOGCONFIG MakeDlgDoneTemplate() {
   cfg.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_ENABLE_HYPERLINKS |
                 TDF_SIZE_TO_CONTENT;
   cfg.pszFooterIcon = TD_SHIELD_ICON;
-  cfg.pszFooter = L"GPLv2: <A>github.com/yzwduck/FontLoaderSub</A>";
+  cfg.pszFooter = L"GPLv2: <A>github.com/baka-gourd/FontLoaderSub</A>";
   cfg.pfCallback = DlgDoneProc;
   cfg.cButtons =
       static_cast<UINT>(sizeof(kDlgDoneButtons) / sizeof(kDlgDoneButtons[0]));
