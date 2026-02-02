@@ -1,6 +1,10 @@
 #pragma once
 
-#include "cstl.h"
+#include <atomic>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
 #include "util.h"
 #include "font_set.h"
 
@@ -14,31 +18,30 @@ typedef enum {
 
 typedef struct {
   FL_MatchFlag flag;
-  const char *face;
-  const char *filename;
+  std::string face;
+  std::string filename;
   uint8_t hash[32];
 } FL_FontMatch;
 
 typedef struct {
   allocator_t *alloc;
-  str8_db_t sub_font;
-  // List of already processed subtitle file paths (NUL-separated strings).
-  // Used to avoid double-counting and re-parsing when incremental loads
-  // include previously processed files (e.g. dropping a folder after a file).
-  str8_db_t loaded_sub_files;
-  str_db_t font_path;
-  str_db_t walk_path;
+  std::vector<std::string> sub_fonts;
+  std::unordered_set<std::string> sub_font_set;
+  // Lowercase UTF-8 absolute paths to avoid re-processing.
+  std::unordered_set<std::string> loaded_sub_files;
+  std::wstring font_path;
+  std::wstring walk_path;
   FS_Set *font_set;
 
-  uint32_t num_sub;
-  uint32_t num_sub_font;
-  uint32_t num_font_loaded;
-  uint32_t num_font_failed;
-  uint32_t num_font_unmatched;
+  std::atomic<uint32_t> num_sub;
+  std::atomic<uint32_t> num_sub_font;
+  std::atomic<uint32_t> num_font_loaded;
+  std::atomic<uint32_t> num_font_failed;
+  std::atomic<uint32_t> num_font_unmatched;
 
   void *event_cancel;
   void *hash_alg;
-  vec_t loaded_font;
+  std::vector<FL_FontMatch> loaded_font;
 } FL_LoaderCtx;
 
 int fl_init(FL_LoaderCtx *c, allocator_t *alloc);

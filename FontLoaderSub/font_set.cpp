@@ -16,6 +16,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <zstd.h>
+
 typedef struct {
   std::string ver;
   uint16_t ver_lang_id;
@@ -145,10 +147,8 @@ static size_t fs_strnlen(const char *str, size_t n) {
   return n;
 }
 
-static bool fs_utf16be_to_utf8(
-    const wchar_t *str,
-    size_t cch,
-    std::string *out) {
+static bool
+fs_utf16be_to_utf8(const wchar_t *str, size_t cch, std::string *out) {
   if (out == NULL)
     return false;
   out->clear();
@@ -313,8 +313,7 @@ int fs_add_font(FS_Set *s, const char *tag, void *buf, size_t size) {
   if (s == NULL || tag == NULL || buf == NULL || size == 0)
     return FL_UNRECOGNIZED;
 
-  FS_FontParseResult *parsed =
-      fs_parse_font_data((const uint8_t *)buf, size);
+  FS_FontParseResult *parsed = fs_parse_font_data((const uint8_t *)buf, size);
   const int r = fs_add_parsed_font(s, tag, parsed);
   fs_parse_font_free(parsed);
   return r;
@@ -375,7 +374,8 @@ int fs_iter_new(FS_Set *s, const char *face, FS_Iter *it) {
     while (m > 0 && fs_stricmp_ascii(face, s->index[m - 1].face) == 0) {
       m--;
     }
-    while (m != (int)s->stat.num_face && fs_blacklist_match(s, s->index[m].tag)) {
+    while (m != (int)s->stat.num_face &&
+           fs_blacklist_match(s, s->index[m].tag)) {
       m++;
     }
     if (m == (int)s->stat.num_face) {
@@ -451,26 +451,44 @@ int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
   if (map.data == NULL)
     return FL_OS_ERROR;
 
-  flatbuffers::Verifier verifier((const uint8_t *)map.data, map.size);
-  if (!fontloader::VerifyFontDbBuffer(verifier)) {
+  const unsigned long long content_size =
+      ZSTD_getFrameContentSize(map.data, map.size);
+  if (content_size == ZSTD_CONTENTSIZE_ERROR ||
+      content_size == ZSTD_CONTENTSIZE_UNKNOWN) {
     FlMemUnmap(&map);
     return FL_UNRECOGNIZED;
   }
-
-  const fontloader::FontDb *db = fontloader::GetFontDb(map.data);
-  if (db == NULL) {
+  if (content_size > static_cast<unsigned long long>(SIZE_MAX)) {
     FlMemUnmap(&map);
+    return FL_OUT_OF_MEMORY;
+  }
+
+  std::vector<uint8_t> decompressed;
+  decompressed.resize((size_t)content_size);
+  size_t decompressed_size = ZSTD_decompress(
+      decompressed.data(), decompressed.size(), map.data, map.size);
+  FlMemUnmap(&map);
+  if (ZSTD_isError(decompressed_size) ||
+      decompressed_size != decompressed.size()) {
+    return FL_CORRUPTED;
+  }
+
+  flatbuffers::Verifier verifier(decompressed.data(), decompressed.size());
+  if (!fontloader::VerifyFontDbBuffer(verifier)) {
+    return FL_UNRECOGNIZED;
+  }
+
+  const fontloader::FontDb *db = fontloader::GetFontDb(decompressed.data());
+  if (db == NULL) {
     return FL_CORRUPTED;
   }
   if (db->version() != 1) {
-    FlMemUnmap(&map);
     return FL_UNRECOGNIZED;
   }
 
   FS_Set *s = NULL;
   r = fs_create(alloc, &s);
   if (r != FL_OK) {
-    FlMemUnmap(&map);
     return r;
   }
 
@@ -481,7 +499,6 @@ int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
       const auto *entry = entries->Get(i);
       if (entry == NULL || entry->tag() == NULL || entry->face() == NULL) {
         fs_free(s);
-        FlMemUnmap(&map);
         return FL_CORRUPTED;
       }
       FS_Entry e;
@@ -507,11 +524,8 @@ int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
   r = fs_build_index(s);
   if (r != FL_OK) {
     fs_free(s);
-    FlMemUnmap(&map);
     return r;
   }
-
-  FlMemUnmap(&map);
   *out = s;
   return FL_OK;
 }
@@ -548,9 +562,25 @@ int fs_cache_dump(FS_Set *s, const wchar_t *path) {
       builder, 1, s->stat.num_file, s->stat.num_face, entries);
   builder.Finish(db, fontloader::FontDbIdentifier());
 
+  const size_t src_size = builder.GetSize();
+  const size_t max_dst = ZSTD_compressBound(src_size);
+  std::vector<uint8_t> compressed;
+  compressed.resize(max_dst);
+  size_t compressed_size = ZSTD_compress(
+      compressed.data(), compressed.size(), builder.GetBufferPointer(),
+      src_size, 6);
+  if (ZSTD_isError(compressed_size)) {
+    CloseHandle(h);
+    return FL_OS_ERROR;
+  }
+  if (compressed_size > static_cast<size_t>(MAXDWORD)) {
+    CloseHandle(h);
+    return FL_OUT_OF_MEMORY;
+  }
+
   DWORD written = 0;
-  BOOL ok = WriteFile(
-      h, builder.GetBufferPointer(), (DWORD)builder.GetSize(), &written, NULL);
+  BOOL ok =
+      WriteFile(h, compressed.data(), (DWORD)compressed_size, &written, NULL);
   CloseHandle(h);
   return ok ? FL_OK : FL_OS_ERROR;
 }

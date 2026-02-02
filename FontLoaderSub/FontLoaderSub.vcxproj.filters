@@ -49,9 +49,6 @@
     <ClCompile Include="ttf_parser.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="cstl.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="font_set.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -91,9 +88,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="font_set.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="cstl.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="font_loader.h">

@@ -6,6 +6,7 @@
 #include <ShlObj.h>
 #include <ObjIdl.h>
 
+#include <cwchar>
 #include <limits>
 
 #include "ass_string.h"
@@ -20,6 +21,25 @@ typedef enum {
 #define BUTTON_ID_START 1024
 
 typedef int (*ShortcutTogglers)(FL_ShortCtx *c, ShortcutMode mode);
+
+static size_t ShortcutWcsnlen(const wchar_t *str, size_t n) {
+  for (size_t i = 0; i != n; i++) {
+    if (str[i] == 0)
+      return i;
+  }
+  return n;
+}
+
+static void ShortcutTmpClear(FL_ShortCtx *c) {
+  c->tmp.clear();
+}
+
+static void ShortcutTmpAppend(FL_ShortCtx *c, const wchar_t *str, size_t cch) {
+  if (str == NULL)
+    return;
+  const size_t len = cch ? ShortcutWcsnlen(str, cch) : wcslen(str);
+  c->tmp.append(str, len);
+}
 
 static int ShortcutExplorerDirectory(
     FL_ShortCtx *ctx,
@@ -36,6 +56,7 @@ static HRESULT CALLBACK DlgShortcutProc(
     LONG_PTR dwRefData);
 
 void ShortcutInit(FL_ShortCtx *c, HINSTANCE hInst, allocator_t *alloc) {
+  (void)alloc;
   c->dlg.cbSize = sizeof c->dlg;
   c->dlg.hInstance = hInst;
   c->dlg.pszContent = MAKEINTRESOURCE(IDS_MANAGE_SHORTCUT);
@@ -48,7 +69,7 @@ void ShortcutInit(FL_ShortCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   for (int i = 0; i != FL_SHORTCUT_MAX; i++) {
     c->button[i].nButtonID = BUTTON_ID_START + i;
   }
-  str_db_init(&c->tmp, alloc, 0, 0);
+  c->tmp.clear();
 }
 
 void ShortcutShow(FL_ShortCtx *c, HWND hWnd) {
@@ -67,13 +88,12 @@ int ShortcutExplorerDirectory(
   HKEY command = NULL;
   LSTATUS ret;
   int succ = 0;
-  str_db_seek(&c->tmp, 0);
+  ShortcutTmpClear(c);
 
   do {
-    if (!str_db_push_u16_le(&c->tmp, key_path, 0) ||
-        !str_db_push_u16_le(&c->tmp, c->key, 0))
-      break;
-    const WCHAR *key = str_db_get(&c->tmp, 0);
+    ShortcutTmpAppend(c, key_path, 0);
+    ShortcutTmpAppend(c, c->key, 0);
+    const WCHAR *key = c->tmp.c_str();
 
     if (mode == SHORTCUT_MODE_QUERY) {
       ret = RegOpenKeyEx(HKEY_CURRENT_USER, key, 0, KEY_QUERY_VALUE, &root);
@@ -97,13 +117,12 @@ int ShortcutExplorerDirectory(
           L"\",-%1!i!", 0, 0, res_suffix, _countof(res_suffix),
           (va_list *)&c->dir_bg_menu_str_id);
 
-      str_db_seek(&c->tmp, 0);
-      if (!str_db_push_u16_le(&c->tmp, L"@\"", 0) ||
-          !str_db_push_u16_le(&c->tmp, c->path, 0) ||
-          !str_db_push_u16_le(&c->tmp, res_suffix, 0))
-        break;
-      const WCHAR *verb = str_db_get(&c->tmp, 0);
-      const size_t verb_bytes = str_db_tell(&c->tmp) * sizeof verb[0];
+      ShortcutTmpClear(c);
+      ShortcutTmpAppend(c, L"@\"", 0);
+      ShortcutTmpAppend(c, c->path, 0);
+      ShortcutTmpAppend(c, res_suffix, 0);
+      const WCHAR *verb = c->tmp.c_str();
+      const size_t verb_bytes = c->tmp.size() * sizeof verb[0];
       if (verb_bytes > (std::numeric_limits<DWORD>::max)()) {
         ret = ERROR_MORE_DATA;
         break;
@@ -120,13 +139,12 @@ int ShortcutExplorerDirectory(
       if (ret != ERROR_SUCCESS)
         break;
 
-      str_db_seek(&c->tmp, 0);
-      if (!str_db_push_u16_le(&c->tmp, L"\"", 0) ||
-          !str_db_push_u16_le(&c->tmp, c->path, 0) ||
-          !str_db_push_u16_le(&c->tmp, L"\" \"%V\"", 0))
-        break;
-      const WCHAR *path = str_db_get(&c->tmp, 0);
-      const size_t path_bytes = str_db_tell(&c->tmp) * sizeof path[0];
+      ShortcutTmpClear(c);
+      ShortcutTmpAppend(c, L"\"", 0);
+      ShortcutTmpAppend(c, c->path, 0);
+      ShortcutTmpAppend(c, L"\" \"%V\"", 0);
+      const WCHAR *path = c->tmp.c_str();
+      const size_t path_bytes = c->tmp.size() * sizeof path[0];
       if (path_bytes > (std::numeric_limits<DWORD>::max)()) {
         ret = ERROR_MORE_DATA;
         break;
@@ -158,19 +176,17 @@ int ShortcutSendTo(FL_ShortCtx *c, ShortcutMode mode) {
   int succ = 0;
   HRESULT hr;
   PWSTR sendto_path = NULL;
-  str_db_seek(&c->tmp, 0);
+  ShortcutTmpClear(c);
 
   do {
     hr = SHGetKnownFolderPath(FOLDERID_SendTo, 0, NULL, &sendto_path);
     if (FAILED(hr))
       break;
-    if (!str_db_push_u16_le(&c->tmp, sendto_path, 0) ||
-        !str_db_push_u16_le(&c->tmp, L"\\", 0) ||
-        !str_db_push_u16_le(
-            &c->tmp, ResLoadString(c->dlg.hInstance, c->sendto_str_id), 0) ||
-        !str_db_push_u16_le(&c->tmp, L".lnk", 0))
-      break;
-    const WCHAR *path = str_db_get(&c->tmp, 0);
+    ShortcutTmpAppend(c, sendto_path, 0);
+    ShortcutTmpAppend(c, L"\\", 0);
+    ShortcutTmpAppend(c, ResLoadString(c->dlg.hInstance, c->sendto_str_id), 0);
+    ShortcutTmpAppend(c, L".lnk", 0);
+    const WCHAR *path = c->tmp.c_str();
     if (mode == SHORTCUT_MODE_QUERY) {
       HANDLE h = CreateFile(
           path, 0, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,

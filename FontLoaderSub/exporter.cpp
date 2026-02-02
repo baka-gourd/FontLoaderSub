@@ -55,14 +55,13 @@ static ULONG STDMETHODCALLTYPE LFEC_Release(IEnumShellItems *This) {
 
 static HRESULT LFEC_NextOne(LoadedFontEnumCtx *c, IShellItem **item) {
   FL_LoaderCtx *fl = &c->app->loader;
-  while (c->i != fl->loaded_font.n) {
-    FL_FontMatch *data = (FL_FontMatch *)fl->loaded_font.data;
-    FL_FontMatch *m = &data[c->i];
+  while (c->i != fl->loaded_font.size()) {
+    FL_FontMatch *m = &fl->loaded_font[c->i];
     c->i++;
-    if (m->filename != NULL && (m->flag & FL_LOAD_DUP) == 0) {
+    if (!m->filename.empty() && (m->flag & FL_LOAD_DUP) == 0) {
       if (item != NULL) {
         std::wstring file_w;
-        if (!Utf8ToUtf16(m->filename, &file_w))
+        if (!Utf8ToUtf16(m->filename.c_str(), &file_w))
           return E_FAIL;
         return SHCreateItemFromRelativeName(
             c->root, file_w.c_str(), NULL, IID_IShellItem, (void **)item);
@@ -135,29 +134,23 @@ static const IEnumShellItemsVtbl kLFEC_Verb = {
 
 static HRESULT LFEC_Create(FL_AppCtx *app, IEnumShellItems **ppenum) {
   FL_LoaderCtx *fl = &app->loader;
-  WCHAR font_path_hack = 0;
-  WCHAR *font_path = (WCHAR *)str_db_get(&fl->font_path, 0);
-  if (font_path == NULL)
+  std::wstring font_path = fl->font_path;
+  if (font_path.empty())
     return E_FAIL;
-  if (font_path[0] == L'\\' && font_path[1] == L'\\' && font_path[2] == L'?' &&
-      font_path[3] == L'\\') {
+  if (font_path.size() >= 4 && font_path[0] == L'\\' && font_path[1] == L'\\' &&
+      font_path[2] == L'?' && font_path[3] == L'\\') {
     // case 1: \\?\E:\... -> E:\...
-    font_path += 4;
-    if (font_path[0] == L'U' && font_path[1] == L'N' && font_path[2] == L'C' &&
-        font_path[3] == L'\\') {
+    font_path.erase(0, 4);
+    if (font_path.size() >= 4 && font_path[0] == L'U' && font_path[1] == L'N' &&
+        font_path[2] == L'C' && font_path[3] == L'\\') {
       // case 2: \\?\UNC\tsclient\... -> \\tsclient\...
-      // hack the first backslash
-      font_path += 2;
-      font_path_hack = font_path[0];
+      font_path.erase(0, 2);
       font_path[0] = L'\\';
     }
   }
   IShellItem *dir_root = NULL;
   HRESULT hr = SHCreateItemFromParsingName(
-      font_path, NULL, IID_IShellItem, (void **)&dir_root);
-  if (font_path_hack) {
-    font_path[0] = font_path_hack;
-  }
+      font_path.c_str(), NULL, IID_IShellItem, (void **)&dir_root);
   if (FAILED(hr))
     return hr;
 

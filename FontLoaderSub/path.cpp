@@ -1,20 +1,22 @@
 #include "path.h"
 
-typedef struct {
-  FL_FileWalkCb callback;
-  void *arg;
-  str_db_t path;
-} FL_WalkDirCtx;
+#include <string>
 
-int FlResolvePath(const wchar_t *path, str_db_t *s) {
+int FlResolvePath(const wchar_t *path, std::wstring *out) {
+  if (out == NULL)
+    return FL_OUT_OF_MEMORY;
+
   int r = FL_OK;
-  HANDLE handle;
+  HANDLE handle = INVALID_HANDLE_VALUE;
 
   do {
     handle = CreateFile(
         path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
-    // return value unchecked
+    if (handle == INVALID_HANDLE_VALUE) {
+      r = FL_OS_ERROR;
+      break;
+    }
 
     const DWORD name_flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
     const DWORD size = GetFinalPathNameByHandle(handle, NULL, 0, name_flags);
@@ -22,83 +24,66 @@ int FlResolvePath(const wchar_t *path, str_db_t *s) {
       r = FL_OS_ERROR;
       break;
     }
-    // allocate buffer
-    str_db_seek(s, 0);
-    const size_t space = vec_prealloc(&s->vec, size + MAX_PATH / 2);
-    if (space > static_cast<size_t>(MAXDWORD)) {
-      r = FL_OUT_OF_MEMORY;
-      break;
-    }
-    const DWORD space_dw = static_cast<DWORD>(space);
-    if (space < size) {
-      r = FL_OUT_OF_MEMORY;
-      break;
-    }
-    // get path
-    wchar_t *buffer = (wchar_t *)str_db_get(s, 0);
+
+    std::wstring buffer;
+    buffer.resize(size);
     const DWORD cch =
-        GetFinalPathNameByHandle(handle, buffer, space_dw, name_flags);
+        GetFinalPathNameByHandle(handle, &buffer[0], size, name_flags);
     if (cch == 0 || cch >= size) {
       r = FL_OS_ERROR;
       break;
     }
-    s->vec.n = cch;
+    buffer.resize(cch);
+    *out = std::move(buffer);
   } while (0);
 
-  CloseHandle(handle);
+  if (handle != INVALID_HANDLE_VALUE)
+    CloseHandle(handle);
   return r;
 }
 
-size_t FlPathParent(str_db_t *path) {
-  size_t pos = str_db_tell(path);
-  wchar_t *buf = (wchar_t *)str_db_get(path, 0);
-  while (pos != 0 && buf[pos - 1] != L'\\')
-    pos--;
-  buf[pos] = 0;
-  str_db_seek(path, pos);
+size_t FlPathParent(std::wstring *path) {
+  if (path == NULL)
+    return 0;
+  const size_t pos = path->find_last_of(L'\\');
+  if (pos == std::wstring::npos) {
+    path->clear();
+    return 0;
+  }
+  path->resize(pos);
   return pos;
 }
 
-static int WalkDirDfs(FL_WalkDirCtx *ctx) {
-  int r = FL_OK;
+static int
+WalkDirDfs(const std::wstring &dir, FL_FileWalkCb callback, void *arg) {
+  std::wstring search = dir;
+  if (!search.empty() && search.back() != L'\\')
+    search += L'\\';
+  search += L"*";
+
   WIN32_FIND_DATA fd;
-  HANDLE find_handle = FindFirstFile(str_db_get(&ctx->path, 0), &fd);
+  HANDLE find_handle = FindFirstFile(search.c_str(), &fd);
   if (find_handle == INVALID_HANDLE_VALUE) {
-    // ignore error, recommended
     return FL_OK;
-    // stop on any error
-    // return FL_OS_ERROR;
   }
 
-  const size_t pos_root = FlPathParent(&ctx->path);
-
+  int r = FL_OK;
   do {
-    if (fd.cFileName[0] == L'.' && fd.cFileName[1] == 0 ||
-        fd.cFileName[0] == L'.' && fd.cFileName[1] == L'.' &&
-            fd.cFileName[2] == 0) {
-      // ignore current and parent directory
+    if ((fd.cFileName[0] == L'.' && fd.cFileName[1] == 0) ||
+        (fd.cFileName[0] == L'.' && fd.cFileName[1] == L'.' &&
+         fd.cFileName[2] == 0)) {
+      continue;
+    }
+
+    std::wstring full = dir;
+    if (!full.empty() && full.back() != L'\\')
+      full += L'\\';
+    full += fd.cFileName;
+
+    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+      r = WalkDirDfs(full, callback, arg);
     } else {
-      // construct the full name
-      str_db_seek(&ctx->path, pos_root);
-      const wchar_t *filename =
-          str_db_push_u16_le(&ctx->path, fd.cFileName, MAX_PATH);
-      if (filename == NULL) {
-        r = FL_OUT_OF_MEMORY;
-        break;
-      }
-      if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-        // it's a directory, append \*
-        const wchar_t *search = str_db_push_u16_le(&ctx->path, L"\\*", 2);
-        if (search == NULL) {
-          r = FL_OUT_OF_MEMORY;
-          break;
-        }
-        r = WalkDirDfs(ctx);
-      } else {
-        // it's a file, fire callback
-        const wchar_t *full = str_db_get(&ctx->path, 0);
-        r = ctx->callback(full, &fd, ctx->arg);
-      }
+      r = callback(full.c_str(), &fd, arg);
     }
   } while (r == FL_OK && FindNextFile(find_handle, &fd));
 
@@ -106,38 +91,8 @@ static int WalkDirDfs(FL_WalkDirCtx *ctx) {
   return r;
 }
 
-int FlWalkDir(
-    const wchar_t *path,
-    allocator_t *alloc,
-    FL_FileWalkCb callback,
-    void *arg) {
-  int r;
-  FL_WalkDirCtx ctx = {};
-  ctx.callback = callback;
-  ctx.arg = arg;
-  str_db_init(&ctx.path, alloc, 0, 0);
-
-  do {
-    const wchar_t *a = str_db_push_u16_le(&ctx.path, path, 0);
-    if (a == NULL) {
-      r = FL_OUT_OF_MEMORY;
-      break;
-    }
-
-    r = WalkDirDfs(&ctx);
-  } while (0);
-
-  str_db_free(&ctx.path);
-  return r;
-}
-
-int FlWalkDirStr(str_db_t *path, FL_FileWalkCb callback, void *arg) {
-  // assume path->pad_len == 0
-  FL_WalkDirCtx ctx = {};
-  ctx.callback = callback;
-  ctx.arg = arg;
-  ctx.path = *path;
-  const int r = WalkDirDfs(&ctx);
-  *path = ctx.path;
-  return r;
+int FlWalkDir(const wchar_t *path, FL_FileWalkCb callback, void *arg) {
+  if (path == NULL || callback == NULL)
+    return FL_OS_ERROR;
+  return WalkDirDfs(path, callback, arg);
 }

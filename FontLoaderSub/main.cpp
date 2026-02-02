@@ -1,5 +1,6 @@
 #include "main.h"
 
+#include <atomic>
 #include <cstring>
 #include <string>
 
@@ -25,30 +26,30 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
     UINT_PTR uIdSubclass,
     DWORD_PTR dwRefData);
 
-static int IsSubtitleFileLoaded(FL_AppCtx *c, const wchar_t *filePath) {
+static std::wstring NormalizeSubtitlePath(const wchar_t *filePath) {
   wchar_t fullPath[MAX_PATH * 2];
   if (GetFullPathName(filePath, _countof(fullPath), fullPath, NULL) == 0) {
+    return std::wstring();
+  }
+  std::wstring normalized(fullPath);
+  if (!normalized.empty()) {
+    CharLowerBuffW(&normalized[0], (DWORD)normalized.size());
+  }
+  return normalized;
+}
+
+static int IsSubtitleFileLoaded(FL_AppCtx *c, const wchar_t *filePath) {
+  std::wstring normalized = NormalizeSubtitlePath(filePath);
+  if (normalized.empty())
     return 0;
-  }
-
-  size_t pos = 0;
-  const wchar_t *loadedPath = NULL;
-  while ((loadedPath = str_db_next(&c->loaded_subs, &pos)) != NULL) {
-    if (CompareStringOrdinal(fullPath, -1, loadedPath, -1, TRUE) == CSTR_EQUAL) {
-      return 1;
-    }
-  }
-
-  return 0;
+  return c->loaded_subs.find(normalized) != c->loaded_subs.end();
 }
 
 static int AddSubtitleFileToLoaded(FL_AppCtx *c, const wchar_t *filePath) {
-  wchar_t fullPath[MAX_PATH * 2];
-  if (GetFullPathName(filePath, _countof(fullPath), fullPath, NULL) == 0) {
+  std::wstring normalized = NormalizeSubtitlePath(filePath);
+  if (normalized.empty())
     return 0;
-  }
-
-  return str_db_push_u16_le(&c->loaded_subs, fullPath, 0) != NULL;
+  return c->loaded_subs.insert(std::move(normalized)).second ? 1 : 0;
 }
 
 static void *mem_realloc(void *existing, size_t size, void *arg) {
@@ -219,46 +220,39 @@ static void AppHelpUsage(FL_AppCtx *c, HWND hWnd) {
 }
 
 static int AppBuildLog(FL_AppCtx *c) {
-  vec_t *loaded = &c->loader.loaded_font;
-  str_db_t *log = &c->log;
+  const auto &loaded = c->loader.loaded_font;
+  c->log.clear();
 
-  str_db_seek(log, 0);
-  FL_FontMatch *data = (FL_FontMatch *)loaded->data;
-
-  for (size_t i = 0; i != loaded->n; i++) {
+  for (const auto &m : loaded) {
     const wchar_t *tag;
-    FL_FontMatch *m = &data[i];
-    if (m->flag & (FL_LOAD_DUP))
+    if (m.flag & (FL_LOAD_DUP))
       tag = L"[^ ] ";
-    else if (m->flag & (FL_OS_LOADED | FL_LOAD_OK))
+    else if (m.flag & (FL_OS_LOADED | FL_LOAD_OK))
       tag = L"[ok] ";
-    else if (m->flag & (FL_LOAD_ERR))
+    else if (m.flag & (FL_LOAD_ERR))
       tag = L"[ X] ";
-    else if (1 || m->flag & (FL_LOAD_MISS))
+    else
       tag = L"[??] ";
+
     std::wstring face_w;
-    if (m->face && !Utf8ToUtf16(m->face, &face_w))
+    if (!m.face.empty() && !Utf8ToUtf16(m.face.c_str(), &face_w))
       return 0;
-    if (!str_db_push_u16_le(log, tag, 0) ||
-        !str_db_push_u16_le(log, face_w.c_str(), face_w.size()))
-      return 0;
-    if (m->filename && !(m->flag & FL_LOAD_DUP)) {
+
+    c->log.append(tag);
+    c->log.append(face_w);
+
+    if (!m.filename.empty() && !(m.flag & FL_LOAD_DUP)) {
       std::wstring file_w;
-      if (!Utf8ToUtf16(m->filename, &file_w))
+      if (!Utf8ToUtf16(m.filename.c_str(), &file_w))
         return 0;
-      if (!str_db_push_u16_le(log, L" > ", 0) ||
-          !str_db_push_u16_le(log, file_w.c_str(), file_w.size()))
-        return 0;
+      c->log.append(L" > ");
+      c->log.append(file_w);
     }
-    if (!str_db_push_u16_le(log, L"\n", 0))
-      return 0;
+    c->log.append(L"\n");
   }
-  const size_t pos = str_db_tell(log);
-  if (!pos)
-    return 0;
-  wchar_t *buf = (wchar_t *)str_db_get(log, 0);
-  buf[pos - 1] = 0;
-  return 1;
+  if (!c->log.empty())
+    c->log.pop_back();
+  return !c->log.empty() ? 1 : 0;
 }
 
 static int AppUpdateStatus(FL_AppCtx *c) {
@@ -267,14 +261,17 @@ static int AppUpdateStatus(FL_AppCtx *c) {
     fs_stat(c->loader.font_set, &stat);
   }
 
+  const DWORD_PTR loaded = static_cast<DWORD_PTR>(
+      c->loader.num_font_loaded.load(std::memory_order_relaxed));
+  const DWORD_PTR failed = static_cast<DWORD_PTR>(
+      c->loader.num_font_failed.load(std::memory_order_relaxed));
+  const DWORD_PTR unmatched = static_cast<DWORD_PTR>(
+      c->loader.num_font_unmatched.load(std::memory_order_relaxed));
+  const DWORD_PTR subs =
+      static_cast<DWORD_PTR>(c->loader.num_sub.load(std::memory_order_relaxed));
   DWORD_PTR args[] = {
       // arguments
-      c->loader.num_font_loaded,
-      c->loader.num_font_failed,
-      c->loader.num_font_unmatched,
-      stat.num_file,
-      stat.num_face,
-      c->loader.num_sub,
+      loaded, failed, unmatched, stat.num_file, stat.num_face, subs,
   };
   FormatMessage(
       FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY,
@@ -317,7 +314,7 @@ static DWORD WINAPI AppWorker(LPVOID param) {
       break;
     }
     case APP_LOAD_CACHE: {
-      fl_scan_fonts(&c->loader, c->font_path, kCacheFile, kBlackFile);
+      fl_scan_fonts(&c->loader, c->font_path.c_str(), kCacheFile, kBlackFile);
       FS_Stat stat = {0};
       fs_stat(c->loader.font_set, &stat);
       if (stat.num_face == 0) {
@@ -328,7 +325,8 @@ static DWORD WINAPI AppWorker(LPVOID param) {
       break;
     }
     case APP_SCAN_FONT: {
-      if (fl_scan_fonts(&c->loader, c->font_path, NULL, kBlackFile) == FL_OK) {
+      if (fl_scan_fonts(&c->loader, c->font_path.c_str(), NULL, kBlackFile) ==
+          FL_OK) {
         fl_save_cache(&c->loader, kCacheFile);
       }
       c->app_state = APP_LOAD_FONT;
@@ -423,7 +421,7 @@ static HRESULT CALLBACK DlgWorkProc(
         if (!c->cancelled) {
           // and has not been cancelled
           if (AppBuildLog(c)) {
-            c->dlg_done.pszExpandedInformation = str_db_get(&c->log, 0);
+            c->dlg_done.pszExpandedInformation = c->log.c_str();
           } else {
             c->dlg_done.pszExpandedInformation = NULL;
           }
@@ -566,7 +564,8 @@ static HRESULT CALLBACK DlgDoneProc(
 
     FS_Stat stat = {0};
     fs_stat(c->loader.font_set, &stat);
-    if (c->loader.num_sub_font == 0 || stat.num_face == 0) {
+    if (c->loader.num_sub_font.load(std::memory_order_relaxed) == 0 ||
+        stat.num_face == 0) {
       EnableMenuItem(c->btn_menu, ID_BTN_EXPORT, MF_BYCOMMAND | MF_GRAYED);
       AppHelpUsage(c, hWnd);
     } else {
@@ -671,45 +670,34 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->argv = CommandLineToArgvW(GetCommandLine(), &c->argc);
   if (c->argv == NULL)
     return 0;
-  if (str_db_init(&c->full_exe_path, c->alloc, 0, 0))
-    return 0;
-
   DWORD initial = MAX_PATH;
   while (1) {
-    if (vec_prealloc(&c->full_exe_path.vec, initial) < initial)
-      return 0;
-    DWORD ret = GetModuleFileName(
-        NULL, (WCHAR *)str_db_get(&c->full_exe_path, 0), initial);
+    c->full_exe_path.resize(initial);
+    DWORD ret = GetModuleFileName(NULL, &c->full_exe_path[0], initial);
     if (ret == 0)
       return 0;
-    if (ret < initial) {
-      // sufficient buffer size
+    if (ret < initial - 1) {
+      c->full_exe_path.resize(ret);
       break;
-    } else {
-      initial = initial * 2;
     }
+    initial = initial * 2;
   }
-  if (str_db_push_u16_le(
-          &c->full_exe_path, str_db_get(&c->full_exe_path, 0), 0) == NULL)
-    return 0;
   ShortcutInit(&c->shortcut, hInst, c->alloc);
   c->shortcut.key = L"FontLoaderSub";  // registry key
   c->shortcut.dlg_title = MAKEINTRESOURCE(IDS_APP_NAME_VER);
   c->shortcut.dir_bg_menu_str_id = IDS_SHELL_VERB;
   c->shortcut.sendto_str_id = IDS_SENDTO;
-  c->shortcut.path = str_db_get(&c->full_exe_path, 0);
+  c->shortcut.path = c->full_exe_path.c_str();
   c->app_state = APP_LOAD_SUB;
   c->incremental_load = 0;  // Initialize flag
   if (fl_init(&c->loader, c->alloc) != FL_OK)
     return 0;
-  str_db_init(&c->log, c->alloc, 0, 0);
-  // loaded_subs stores a list of NUL-terminated strings, so pad_len must be 1.
-  // (pad_len=0 is only suitable for building a single concatenated string.)
-  str_db_init(&c->loaded_subs, c->alloc, 0, 1);
-  c->font_path = str_db_get(&c->full_exe_path, 0);
+  c->log.clear();
+  c->loaded_subs.clear();
+  c->font_path = c->full_exe_path;
 
-  if (MOCK_FONT_PATH)
-    c->font_path = MOCK_FONT_PATH;
+  if (MOCK_FONT_PATH != NULL)
+    c->font_path.assign(MOCK_FONT_PATH);
 
   c->evt_stop_cache = CreateEvent(NULL, TRUE, FALSE, NULL);
   if (c->evt_stop_cache == NULL)

@@ -17,6 +17,9 @@
 #include <CommCtrl.h>
 #include <Shobjidl.h>
 
+#include <string>
+#include <unordered_set>
+
 #include "res/resource.h"
 #include "font_loader.h"
 #include "shortcut.h"
@@ -43,10 +46,9 @@ typedef struct {
   FL_LoaderCtx loader;
   FL_AppState app_state;
   wchar_t status_txt[256];  // should be sufficient
-  str_db_t log;
-  const wchar_t *font_path;
-  // wchar_t exe_path[MAX_PATH];
-  str_db_t full_exe_path;
+  std::wstring log;
+  std::wstring font_path;
+  std::wstring full_exe_path;
 
   HWND work_hwnd;
   HWND hwnd_message;  // hidden message-only window for drag-drop
@@ -62,6 +64,6 @@ typedef struct {
   int show_shortcut;
   FL_ShortCtx shortcut;
   ITaskbarList3 *taskbar_list3;
-  str_db_t loaded_subs;  // list of processed subtitle files
+  std::unordered_set<std::wstring> loaded_subs;  // list of processed files
   int incremental_load;  // flag for incremental font loading
 } FL_AppCtx;

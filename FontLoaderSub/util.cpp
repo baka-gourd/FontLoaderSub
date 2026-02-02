@@ -130,7 +130,7 @@ static wchar_t *FlTextDecodeUtf16(
     size_t bytes,
     size_t *cch,
     allocator_t *alloc) {
-  const wchar_t *wstr = (const wchar_t*)mstr;
+  const wchar_t *wstr = (const wchar_t *)mstr;
   wchar_t *buf = NULL;
   int ok = 0;
 
@@ -307,7 +307,6 @@ int FlVersionCmp(const wchar_t *a, const wchar_t *b) {
 int FlStrCmpIW(const wchar_t *a, const wchar_t *b) {
   return StrCmpIW(a, b);
 }
-
 
 #include <ShellScalingApi.h>
 

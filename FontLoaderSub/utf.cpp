@@ -64,8 +64,8 @@ bool Utf16ToUtf8(const wchar_t *input, size_t input_len, std::string *output) {
   }
   size_t needed = simdutf::utf8_length_from_utf16le(utf16, input_len);
   output->resize(needed);
-  size_t written = simdutf::convert_utf16le_to_utf8(
-      utf16, input_len, &(*output)[0]);
+  size_t written =
+      simdutf::convert_utf16le_to_utf8(utf16, input_len, &(*output)[0]);
   if (written == 0 && input_len != 0) {
     output->clear();
     return false;

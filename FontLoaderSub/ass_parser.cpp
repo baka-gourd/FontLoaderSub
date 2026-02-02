@@ -220,7 +220,8 @@ static void parse_events(ASS_Track *track, ASS_Event *event) {
   }
 }
 
-static void process_event_tail(ASS_Track *track, ASS_U8Range *line, int n_ignored) {
+static void
+process_event_tail(ASS_Track *track, ASS_U8Range *line, int n_ignored) {
   int i;
   ASS_U8Range tok[1], tag[1], format[1];
   ASS_Event event = {};
@@ -254,7 +255,8 @@ static void process_event_tail(ASS_Track *track, ASS_U8Range *line, int n_ignore
   parse_events(track, &event);
 }
 
-static void process_styles(ASS_Track *track, const char *begin, const char *end) {
+static void
+process_styles(ASS_Track *track, const char *begin, const char *end) {
   ASS_U8Range line[1], tok[1], tag[1], format[1];
   line->begin = begin;
   line->end = end;
@@ -279,10 +281,8 @@ static void process_styles(ASS_Track *track, const char *begin, const char *end)
   }
 }
 
-static void process_styles_line(
-    ASS_Track *track,
-    const char *begin,
-    const char *end) {
+static void
+process_styles_line(ASS_Track *track, const char *begin, const char *end) {
   if (!ass8_strncmp(begin, "Format:", 7)) {
     track->format_string.begin = begin + 7;
     track->format_string.end = end;
@@ -292,10 +292,8 @@ static void process_styles_line(
   }
 }
 
-static void process_events_line(
-    ASS_Track *track,
-    const char *begin,
-    const char *end) {
+static void
+process_events_line(ASS_Track *track, const char *begin, const char *end) {
   if (!ass8_strncmp(begin, "Format:", 7)) {
     ASS_U8Range fmt_str = {begin + 7, end};
     track->format_string = fmt_str;

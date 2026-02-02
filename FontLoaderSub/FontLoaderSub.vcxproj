@@ -127,12 +127,23 @@
     <OutDir>$(SolutionDir)$(Configuration)\$(Platform)\</OutDir>
     <IntDir>$(Configuration)\$(Platform)\</IntDir>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <VcpkgDebugLibDir>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\debug\lib</VcpkgDebugLibDir>
+    <SimdutfLib Condition="Exists('$(VcpkgDebugLibDir)\simdutfd.lib')">simdutfd.lib</SimdutfLib>
+    <SimdutfLib Condition="'$(SimdutfLib)'==''">simdutf.lib</SimdutfLib>
+    <FlatbuffersLib Condition="Exists('$(VcpkgDebugLibDir)\flatbuffersd.lib')">flatbuffersd.lib</FlatbuffersLib>
+    <FlatbuffersLib Condition="'$(FlatbuffersLib)'==''">flatbuffers.lib</FlatbuffersLib>
+    <ZstdLib Condition="Exists('$(VcpkgDebugLibDir)\zstdd.lib')">zstdd.lib</ZstdLib>
+    <ZstdLib Condition="'$(ZstdLib)'==''">zstd.lib</ZstdLib>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <VcpkgDebugLibDir>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\debug\lib</VcpkgDebugLibDir>
     <SimdutfLib Condition="Exists('$(VcpkgDebugLibDir)\simdutfd.lib')">simdutfd.lib</SimdutfLib>
     <SimdutfLib Condition="'$(SimdutfLib)'==''">simdutf.lib</SimdutfLib>
     <FlatbuffersLib Condition="Exists('$(VcpkgDebugLibDir)\flatbuffersd.lib')">flatbuffersd.lib</FlatbuffersLib>
     <FlatbuffersLib Condition="'$(FlatbuffersLib)'==''">flatbuffers.lib</FlatbuffersLib>
+    <ZstdLib Condition="Exists('$(VcpkgDebugLibDir)\zstdd.lib')">zstdd.lib</ZstdLib>
+    <ZstdLib Condition="'$(ZstdLib)'==''">zstd.lib</ZstdLib>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -140,10 +151,11 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;$(SimdutfLib);$(FlatbuffersLib);$(ZstdLib);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\debug\lib;$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions>$(CMDLINE_DEFINE);%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -161,7 +173,7 @@
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;$(SimdutfLib);$(FlatbuffersLib);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;$(SimdutfLib);$(FlatbuffersLib);$(ZstdLib);%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\debug\lib;$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
@@ -178,12 +190,13 @@
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;zstd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions>$(CMDLINE_DEFINE);%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -202,12 +215,13 @@
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
-      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;zstd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <EntryPointSymbol>MyEntryPoint</EntryPointSymbol>
       <SetChecksum>true</SetChecksum>
@@ -235,7 +249,7 @@
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;zstd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
@@ -262,7 +276,7 @@
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;zstd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <EntryPointSymbol>MyEntryPoint</EntryPointSymbol>
@@ -293,7 +307,6 @@
   <ItemGroup>
     <ClCompile Include="ass_parser.cpp" />
     <ClCompile Include="ass_string.cpp" />
-    <ClCompile Include="cstl.cpp" />
     <ClCompile Include="exporter.cpp" />
     <ClCompile Include="font_loader.cpp" />
     <ClCompile Include="font_set.cpp" />
@@ -309,7 +322,6 @@
   <ItemGroup>
     <ClInclude Include="ass_parser.h" />
     <ClInclude Include="ass_string.h" />
-    <ClInclude Include="cstl.h" />
     <ClInclude Include="exporter.h" />
     <ClInclude Include="font_loader.h" />
     <ClInclude Include="font_set.h" />

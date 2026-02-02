@@ -15,7 +15,9 @@
 #include <Windows.h>
 #include <CommCtrl.h>
 
-#include "cstl.h"
+#include <string>
+
+#include "util.h"
 
 enum { FL_SHORTCUT_SENDTO = 0, FL_SHORTCUT_CONTEXT, FL_SHORTCUT_MAX };
 
@@ -25,7 +27,7 @@ typedef struct {
   UINT sendto_str_id;
   UINT dir_bg_menu_str_id;
   const WCHAR *path;
-  str_db_t tmp;
+  std::wstring tmp;
   TASKDIALOGCONFIG dlg;
   TASKDIALOG_BUTTON button[FL_SHORTCUT_MAX];
   int setup[FL_SHORTCUT_MAX];
