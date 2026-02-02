@@ -140,7 +140,7 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -156,7 +156,7 @@
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -178,7 +178,7 @@
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -202,7 +202,7 @@
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
-      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -229,7 +229,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -256,7 +256,7 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>

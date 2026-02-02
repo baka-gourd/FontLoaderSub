@@ -4,3 +4,6 @@
 [submodule "third_party/tlx"]
 	path = third_party/tlx
 	url = https://github.com/tlx/tlx
+[submodule "third_party/concurrentqueue"]
+	path = third_party/concurrentqueue
+	url = https://github.com/cameron314/concurrentqueue

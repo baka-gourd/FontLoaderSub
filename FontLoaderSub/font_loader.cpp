@@ -6,6 +6,10 @@
 #include <climits>
 #include <cstring>
 #include <string>
+#include <thread>
+#include <atomic>
+#include <vector>
+
 #include "ass_string.h"
 #include "ass_parser.h"
 #include "path.h"
@@ -16,6 +20,7 @@
 #include "absl/strings/string_view.h"
 
 #include <tlx/sort/parallel_mergesort.hpp>
+#include <concurrentqueue.h>
 
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 
@@ -212,12 +217,36 @@ int fl_add_subs(FL_LoaderCtx *c, const wchar_t *path) {
   return r;
 }
 
+typedef struct {
+  std::wstring path;
+  std::string tag;
+} FL_FontScanItem;
+
+typedef struct {
+  std::string tag;
+  FS_FontParseResult *parsed;
+} FL_FontScanResult;
+
+typedef struct {
+  FL_LoaderCtx *loader;
+  size_t base_len;
+  moodycamel::ConcurrentQueue<FL_FontScanItem> *queue;
+  std::atomic<int> *error;
+  std::atomic<bool> *cancel;
+} FL_FontScanCtx;
+
 static int
-fl_walk_font_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
-  FL_LoaderCtx *c = (FL_LoaderCtx *)arg;
-  const int r = fl_check_cancel(c);
-  if (r != FL_OK)
+fl_walk_font_enqueue(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
+  FL_FontScanCtx *ctx = (FL_FontScanCtx *)arg;
+  if (ctx->cancel->load())
+    return FL_OK;
+
+  const int r = fl_check_cancel(ctx->loader);
+  if (r != FL_OK) {
+    ctx->error->store(r);
+    ctx->cancel->store(true);
     return r;
+  }
 
   const size_t len = ass_strlen(path);
   const wchar_t *ext = path + len - 4;
@@ -230,19 +259,91 @@ fl_walk_font_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   if (!(match_attr && match_ext))
     return FL_OK;
 
-  // try load the file
-  memmap_t map;
-  FlMemMap(path, &map);
-  if (map.data) {
-    // skip the base path + '\'
-    const wchar_t *tag = path + str_db_tell(&c->font_path) + 1;
-    std::string tag_u8;
-    if (Utf16ToUtf8(tag, &tag_u8)) {
-      fs_add_font(c->font_set, tag_u8.c_str(), map.data, map.size);
-    }
-    FlMemUnmap(&map);
-  }
+  const wchar_t *tag = path + ctx->base_len + 1;
+  std::string tag_u8;
+  if (!Utf16ToUtf8(tag, &tag_u8))
+    return FL_OK;
+
+  FL_FontScanItem item;
+  item.path = path;
+  item.tag = std::move(tag_u8);
+  ctx->queue->enqueue(std::move(item));
   return FL_OK;
+}
+
+static int fl_scan_fonts_mt(FL_LoaderCtx *c) {
+  moodycamel::ConcurrentQueue<FL_FontScanItem> work_queue;
+  moodycamel::ConcurrentQueue<FL_FontScanResult> result_queue;
+  std::atomic<bool> cancel(false);
+  std::atomic<bool> done(false);
+  std::atomic<int> error(FL_OK);
+
+  const unsigned int hw = std::thread::hardware_concurrency();
+  const unsigned int worker_count = (hw == 0) ? 2u : (hw > 4 ? 4u : hw);
+
+  std::vector<std::thread> workers;
+  workers.reserve(worker_count);
+  for (unsigned int i = 0; i < worker_count; i++) {
+    workers.emplace_back([&]() {
+      FL_FontScanItem item;
+      while (!cancel.load()) {
+        const int cancel_check = fl_check_cancel(c);
+        if (cancel_check != FL_OK) {
+          error.store(cancel_check);
+          cancel.store(true);
+          break;
+        }
+        if (!work_queue.try_dequeue(item)) {
+          if (done.load())
+            break;
+          std::this_thread::yield();
+          continue;
+        }
+
+        memmap_t map;
+        FlMemMap(item.path.c_str(), &map);
+        if (!map.data)
+          continue;
+
+        FS_FontParseResult *parsed =
+            fs_parse_font_data((const uint8_t *)map.data, map.size);
+        FlMemUnmap(&map);
+
+        FL_FontScanResult res;
+        res.tag = std::move(item.tag);
+        res.parsed = parsed;
+        result_queue.enqueue(std::move(res));
+      }
+    });
+  }
+
+  FL_FontScanCtx ctx = {};
+  ctx.loader = c;
+  ctx.base_len = str_db_tell(&c->font_path);
+  ctx.queue = &work_queue;
+  ctx.error = &error;
+  ctx.cancel = &cancel;
+
+  int r = FlWalkDirStr(&c->walk_path, fl_walk_font_enqueue, &ctx);
+  if (r != FL_OK) {
+    error.store(r);
+    cancel.store(true);
+  }
+  done.store(true);
+
+  for (auto &t : workers) {
+    if (t.joinable())
+      t.join();
+  }
+
+  FL_FontScanResult res;
+  while (result_queue.try_dequeue(res)) {
+    fs_add_parsed_font(c->font_set, res.tag.c_str(), res.parsed);
+    fs_parse_font_free(res.parsed);
+  }
+
+  const int scan_err = error.load();
+  return scan_err == FL_OK ? r : scan_err;
 }
 
 static void fl_blacklist_parse(FL_LoaderCtx *c, const char *data, size_t len) {
@@ -347,7 +448,7 @@ int fl_scan_fonts(
       r = fs_create(c->alloc, &c->font_set);
     }
     if (r == FL_OK) {
-      r = FlWalkDirStr(&c->walk_path, fl_walk_font_callback, c);
+      r = fl_scan_fonts_mt(c);
     }
   }
   if (r == FL_OK) {

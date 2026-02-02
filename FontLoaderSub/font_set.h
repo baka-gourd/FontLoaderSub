@@ -5,6 +5,8 @@
 
 typedef struct _FS_Set FS_Set;
 
+typedef struct FS_FontParseResult FS_FontParseResult;
+
 typedef struct {
   uint32_t num_file;
   uint32_t num_face;
@@ -42,6 +44,15 @@ int fs_free(FS_Set *s);
 int fs_stat(FS_Set *s, FS_Stat *stat);
 
 int fs_add_font(FS_Set *s, const char *tag, void *buf, size_t size);
+
+FS_FontParseResult *fs_parse_font_data(const uint8_t *buf, size_t size);
+
+void fs_parse_font_free(FS_FontParseResult *result);
+
+int fs_add_parsed_font(
+    FS_Set *s,
+    const char *tag,
+    const FS_FontParseResult *result);
 
 int fs_build_index(FS_Set *s);
 

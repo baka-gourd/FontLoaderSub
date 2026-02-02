@@ -17,11 +17,23 @@
 #include <vector>
 
 typedef struct {
+  std::string ver;
+  uint16_t ver_lang_id;
+  std::unordered_set<std::string> faces;
+} FS_FontAccum;
+
+typedef struct {
   std::string tag;
   std::string face;
   std::string ver;
   FS_Format format;
 } FS_Entry;
+
+struct FS_FontParseResult {
+  FS_Format format;
+  std::unordered_map<uint32_t, FS_FontAccum> fonts;
+  uint32_t count_face;
+};
 
 struct _FS_Set {
   allocator_t *alloc;
@@ -31,12 +43,6 @@ struct _FS_Set {
   FS_Index *index;
   FS_Stat stat;
 };
-
-typedef struct {
-  std::string ver;
-  uint16_t ver_lang_id;
-  std::unordered_set<std::string> faces;
-} FS_FontAccum;
 
 typedef struct {
   FS_Set *set;
@@ -234,9 +240,9 @@ int fs_stat(FS_Set *s, FS_Stat *stat) {
   return 0;
 }
 
-int fs_add_font(FS_Set *s, const char *tag, void *buf, size_t size) {
-  if (s == NULL || tag == NULL || buf == NULL || size == 0)
-    return FL_UNRECOGNIZED;
+FS_FontParseResult *fs_parse_font_data(const uint8_t *buf, size_t size) {
+  if (buf == NULL || size == 0)
+    return NULL;
 
   int r = FL_OK;
   int ok = 0;
@@ -244,7 +250,7 @@ int fs_add_font(FS_Set *s, const char *tag, void *buf, size_t size) {
   FS_ParseCtx ctx = {};
 
   do {
-    r = ttc_parse((const uint8_t *)buf, size, fs_parser_name_cb, &ctx);
+    r = ttc_parse(buf, size, fs_parser_name_cb, &ctx);
     if (r == FL_OK && ctx.count_face > 0) {
       fmt = FS_FmtTTC;
       ok = 1;
@@ -253,32 +259,65 @@ int fs_add_font(FS_Set *s, const char *tag, void *buf, size_t size) {
 
     ctx.fonts.clear();
     ctx.count_face = 0;
-    const uint8_t *buffer = (const uint8_t *)buf;
-    fmt = (buffer[0] == 'O') ? FS_FmtOTF : FS_FmtTTF;
-    r = otf_parse((const uint8_t *)buf, size, fs_parser_name_cb, &ctx);
+    fmt = (buf[0] == 'O') ? FS_FmtOTF : FS_FmtTTF;
+    r = otf_parse(buf, size, fs_parser_name_cb, &ctx);
     if (r == FL_OK && ctx.count_face > 0) {
       ok = 1;
       break;
     }
   } while (0);
 
-  s->stat.num_file++;
-  if (ok) {
-    for (const auto &item : ctx.fonts) {
-      const FS_FontAccum &font = item.second;
-      for (const auto &face : font.faces) {
-        FS_Entry e;
-        e.tag = tag;
-        e.face = face;
-        e.ver = font.ver;
-        e.format = fmt;
-        s->entries.push_back(e);
-      }
-    }
-    s->stat.num_face += ctx.count_face;
-  }
+  if (!ok)
+    return NULL;
 
-  return ok ? FL_OK : r;
+  FS_FontParseResult *res = new (std::nothrow) FS_FontParseResult();
+  if (res == NULL)
+    return NULL;
+  res->format = fmt;
+  res->fonts = std::move(ctx.fonts);
+  res->count_face = ctx.count_face;
+  return res;
+}
+
+void fs_parse_font_free(FS_FontParseResult *result) {
+  delete result;
+}
+
+int fs_add_parsed_font(
+    FS_Set *s,
+    const char *tag,
+    const FS_FontParseResult *result) {
+  if (s == NULL || tag == NULL)
+    return FL_UNRECOGNIZED;
+
+  s->stat.num_file++;
+  if (result == NULL || result->count_face == 0)
+    return FL_UNRECOGNIZED;
+
+  for (const auto &item : result->fonts) {
+    const FS_FontAccum &font = item.second;
+    for (const auto &face : font.faces) {
+      FS_Entry e;
+      e.tag = tag;
+      e.face = face;
+      e.ver = font.ver;
+      e.format = result->format;
+      s->entries.push_back(e);
+    }
+  }
+  s->stat.num_face += result->count_face;
+  return FL_OK;
+}
+
+int fs_add_font(FS_Set *s, const char *tag, void *buf, size_t size) {
+  if (s == NULL || tag == NULL || buf == NULL || size == 0)
+    return FL_UNRECOGNIZED;
+
+  FS_FontParseResult *parsed =
+      fs_parse_font_data((const uint8_t *)buf, size);
+  const int r = fs_add_parsed_font(s, tag, parsed);
+  fs_parse_font_free(parsed);
+  return r;
 }
 
 int fs_build_index(FS_Set *s) {
