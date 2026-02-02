@@ -1,7 +1,5 @@
 #include "shortcut.h"
 
-#include "shortcut.h"
-
 #include <Shlwapi.h>
 #include <ShlObj.h>
 #include <ObjIdl.h>
@@ -9,7 +7,6 @@
 #include <cwchar>
 #include <limits>
 
-#include "ass_string.h"
 #include "res/resource.h"
 
 typedef enum {
@@ -35,7 +32,7 @@ static void ShortcutTmpClear(FL_ShortCtx *c) {
 }
 
 static void ShortcutTmpAppend(FL_ShortCtx *c, const wchar_t *str, size_t cch) {
-  if (str == NULL)
+  if (str == nullptr)
     return;
   const size_t len = cch ? ShortcutWcsnlen(str, cch) : wcslen(str);
   c->tmp.append(str, len);
@@ -77,15 +74,15 @@ void ShortcutShow(FL_ShortCtx *c, HWND hWnd) {
   c->dlg.pszWindowTitle = c->dlg_title;
   c->dlg.nDefaultButton = IDCLOSE;
   ShortcutRefresh(c, 0);
-  TaskDialogIndirect(&c->dlg, NULL, NULL, NULL);
+  TaskDialogIndirect(&c->dlg, nullptr, nullptr, nullptr);
 }
 
 int ShortcutExplorerDirectory(
     FL_ShortCtx *c,
     const WCHAR *key_path,
     ShortcutMode mode) {
-  HKEY root = NULL;
-  HKEY command = NULL;
+  HKEY root = nullptr;
+  HKEY command = nullptr;
   LSTATUS ret;
   int succ = 0;
   ShortcutTmpClear(c);
@@ -106,8 +103,8 @@ int ShortcutExplorerDirectory(
     } else if (mode == SHORTCUT_MODE_CREATE) {
       DWORD disposition;
       ret = RegCreateKeyEx(
-          HKEY_CURRENT_USER, key, 0, NULL, REG_OPTION_NON_VOLATILE,
-          KEY_ALL_ACCESS, NULL, &root, &disposition);
+          HKEY_CURRENT_USER, key, 0, nullptr, REG_OPTION_NON_VOLATILE,
+          KEY_ALL_ACCESS, nullptr, &root, &disposition);
       if (ret != ERROR_SUCCESS)
         break;
 
@@ -134,8 +131,8 @@ int ShortcutExplorerDirectory(
         break;
 
       ret = RegCreateKeyEx(
-          root, L"command", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS,
-          NULL, &command, &disposition);
+          root, L"command", 0, nullptr, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS,
+          nullptr, &command, &disposition);
       if (ret != ERROR_SUCCESS)
         break;
 
@@ -150,7 +147,7 @@ int ShortcutExplorerDirectory(
         break;
       }
       ret = RegSetValueEx(
-          command, NULL, 0, REG_SZ, (const BYTE *)path,
+          command, nullptr, 0, REG_SZ, (const BYTE *)path,
           static_cast<DWORD>(path_bytes));
       if (ret != ERROR_SUCCESS)
         break;
@@ -175,11 +172,11 @@ static int ShortcutExplorerDirectoryBackground(
 int ShortcutSendTo(FL_ShortCtx *c, ShortcutMode mode) {
   int succ = 0;
   HRESULT hr;
-  PWSTR sendto_path = NULL;
+  PWSTR sendto_path = nullptr;
   ShortcutTmpClear(c);
 
   do {
-    hr = SHGetKnownFolderPath(FOLDERID_SendTo, 0, NULL, &sendto_path);
+    hr = SHGetKnownFolderPath(FOLDERID_SendTo, 0, nullptr, &sendto_path);
     if (FAILED(hr))
       break;
     ShortcutTmpAppend(c, sendto_path, 0);
@@ -189,16 +186,16 @@ int ShortcutSendTo(FL_ShortCtx *c, ShortcutMode mode) {
     const WCHAR *path = c->tmp.c_str();
     if (mode == SHORTCUT_MODE_QUERY) {
       HANDLE h = CreateFile(
-          path, 0, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-          NULL);
+          path, 0, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+          FILE_ATTRIBUTE_NORMAL, nullptr);
       if (h != INVALID_HANDLE_VALUE) {
         CloseHandle(h);
         succ = 1;
       }
     } else if (mode == SHORTCUT_MODE_DELETE) {
       HANDLE h = CreateFile(
-          path, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
-          FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+          path, GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+          FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
       if (h != INVALID_HANDLE_VALUE) {
         CloseHandle(h);
         succ = 1;
@@ -206,7 +203,7 @@ int ShortcutSendTo(FL_ShortCtx *c, ShortcutMode mode) {
     } else if (mode == SHORTCUT_MODE_CREATE) {
       IShellLink *psl;
       hr = CoCreateInstance(
-          CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLink,
+          CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLink,
           (void **)&psl);
       if (SUCCEEDED(hr)) {
         // set shortcut target
@@ -247,8 +244,8 @@ static void ShortcutRefresh(FL_ShortCtx *c, int error) {
     c->dlg.pszFooterIcon = TD_WARNING_ICON;
     c->dlg.pszFooter = MAKEINTRESOURCE(error);
   } else {
-    c->dlg.pszFooterIcon = NULL;
-    c->dlg.pszFooter = NULL;
+    c->dlg.pszFooterIcon = nullptr;
+    c->dlg.pszFooter = nullptr;
   }
 }
 

@@ -1,7 +1,5 @@
 #include "log.h"
 
-#include "log.h"
-
 namespace fl_log {
 bool Init() {
 #if SPDLOG_ACTIVE_LEVEL == SPDLOG_LEVEL_OFF

@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstring>
 #include <new>
 #include <string>
 #include <unordered_map>
@@ -61,9 +60,9 @@ static int fs_tolower_ascii(int ch) {
 }
 
 static int fs_stricmp_ascii(const char *a, const char *b) {
-  if (a == NULL)
+  if (a == nullptr)
     return b ? -1 : 0;
-  if (b == NULL)
+  if (b == nullptr)
     return 1;
   while (*a && *b) {
     int da = fs_tolower_ascii(*a);
@@ -108,9 +107,9 @@ static int fs_version_cmp_utf8(const char *a, const char *b) {
   const char *ptr_b = b;
   int cmp = 0;
 
-  if (b == NULL)
+  if (b == nullptr)
     return 1;
-  if (a == NULL)
+  if (a == nullptr)
     return -1;
 
   while (*ptr_a && *ptr_b && cmp == 0) {
@@ -151,7 +150,7 @@ static size_t fs_strnlen(const char *str, size_t n) {
 
 static bool
 fs_utf16be_to_utf8(const wchar_t *str, size_t cch, std::string *out) {
-  if (out == NULL)
+  if (out == nullptr)
     return false;
   out->clear();
   if (cch == 0)
@@ -211,16 +210,16 @@ static int fs_idx_comp(const FS_Index &a, const FS_Index &b) {
 }
 
 int fs_create(allocator_t *alloc, FS_Set **out) {
-  if (out == NULL)
+  if (out == nullptr)
     return FL_OUT_OF_MEMORY;
-  void *mem = alloc->alloc(NULL, sizeof(FS_Set), alloc->arg);
+  void *mem = alloc->alloc(nullptr, sizeof(FS_Set), alloc->arg);
   if (!mem) {
-    *out = NULL;
+    *out = nullptr;
     return FL_OUT_OF_MEMORY;
   }
   FS_Set *s = new (mem) FS_Set();
   s->alloc = alloc;
-  s->index = NULL;
+  s->index = nullptr;
   s->stat = {};
   *out = s;
   return FL_OK;
@@ -243,8 +242,8 @@ int fs_stat(FS_Set *s, FS_Stat *stat) {
 }
 
 FS_FontParseResult *fs_parse_font_data(const uint8_t *buf, size_t size) {
-  if (buf == NULL || size == 0)
-    return NULL;
+  if (buf == nullptr || size == 0)
+    return nullptr;
 
   int r = FL_OK;
   int ok = 0;
@@ -270,11 +269,11 @@ FS_FontParseResult *fs_parse_font_data(const uint8_t *buf, size_t size) {
   } while (0);
 
   if (!ok)
-    return NULL;
+    return nullptr;
 
   FS_FontParseResult *res = new (std::nothrow) FS_FontParseResult();
-  if (res == NULL)
-    return NULL;
+  if (res == nullptr)
+    return nullptr;
   res->format = fmt;
   res->fonts = std::move(ctx.fonts);
   res->count_face = ctx.count_face;
@@ -296,11 +295,11 @@ int fs_add_parsed_font(
     FS_Set *s,
     const char *tag,
     const FS_FontParseResult *result) {
-  if (s == NULL || tag == NULL)
+  if (s == nullptr || tag == nullptr)
     return FL_UNRECOGNIZED;
 
   s->stat.num_file++;
-  if (result == NULL || result->count_face == 0)
+  if (result == nullptr || result->count_face == 0)
     return FL_UNRECOGNIZED;
 
   for (const auto &item : result->fonts) {
@@ -319,7 +318,7 @@ int fs_add_parsed_font(
 }
 
 int fs_add_font(FS_Set *s, const char *tag, void *buf, size_t size) {
-  if (s == NULL || tag == NULL || buf == NULL || size == 0)
+  if (s == nullptr || tag == nullptr || buf == nullptr || size == 0)
     return FL_UNRECOGNIZED;
 
   FS_FontParseResult *parsed = fs_parse_font_data((const uint8_t *)buf, size);
@@ -329,7 +328,7 @@ int fs_add_font(FS_Set *s, const char *tag, void *buf, size_t size) {
 }
 
 int fs_build_index(FS_Set *s) {
-  if (s == NULL)
+  if (s == nullptr)
     return FL_OUT_OF_MEMORY;
 
   s->stat.num_face = (uint32_t)s->entries.size();
@@ -339,7 +338,7 @@ int fs_build_index(FS_Set *s) {
     FS_Index idx = {};
     idx.tag = e.tag.c_str();
     idx.face = e.face.c_str();
-    idx.ver = e.ver.empty() ? NULL : e.ver.c_str();
+    idx.ver = e.ver.empty() ? nullptr : e.ver.c_str();
     idx.format = e.format;
     s->index_vec.push_back(idx);
   }
@@ -353,16 +352,16 @@ int fs_build_index(FS_Set *s) {
         });
   }
 
-  s->index = s->index_vec.empty() ? NULL : s->index_vec.data();
+  s->index = s->index_vec.empty() ? nullptr : s->index_vec.data();
   return FL_OK;
 }
 
 int fs_iter_new(FS_Set *s, const char *face, FS_Iter *it) {
-  if (s == NULL || s->index == NULL || it == NULL)
+  if (s == nullptr || s->index == nullptr || it == nullptr)
     return 0;
   int a = 0, b = (int)s->stat.num_face - 1;
   int m = 0;
-  if (s->index != NULL && s->stat.num_face != 0) {
+  if (s->index != nullptr && s->stat.num_face != 0) {
     while (a <= b) {
       m = a + (b - a) / 2;
       const char *got = s->index[m].face;
@@ -400,7 +399,7 @@ int fs_iter_new(FS_Set *s, const char *face, FS_Iter *it) {
     return 1;
   } while (0);
 
-  it->set = NULL;
+  it->set = nullptr;
   it->query_id = 0;
   it->index_id = 0;
   return 0;
@@ -408,7 +407,7 @@ int fs_iter_new(FS_Set *s, const char *face, FS_Iter *it) {
 
 int fs_iter_next(FS_Iter *it) {
   FS_Set *s = it->set;
-  if (s == NULL)
+  if (s == nullptr)
     return 0;
   if (it->index_id == s->stat.num_face)
     return 0;
@@ -431,11 +430,11 @@ int fs_iter_next(FS_Iter *it) {
       continue;
     }
 
-    if (ver == NULL) {
-      if (got_ver != NULL)
+    if (ver == nullptr) {
+      if (got_ver != nullptr)
         continue;
     } else {
-      if (got_ver == NULL)
+      if (got_ver == nullptr)
         continue;
       if (absl::string_view(ver) != got_ver)
         continue;
@@ -449,18 +448,18 @@ int fs_iter_next(FS_Iter *it) {
     return 1;
   }
 
-  it->set = NULL;
+  it->set = nullptr;
   return 0;
 }
 
 int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
-  if (out == NULL)
+  if (out == nullptr)
     return FL_OUT_OF_MEMORY;
-  *out = NULL;
+  *out = nullptr;
 
-  memmap_t map = {0};
+  memmap_t map = {nullptr};
   int r = FlMemMap(path, &map);
-  if (map.data == NULL)
+  if (map.data == nullptr)
     return FL_OS_ERROR;
 
   const unsigned long long content_size =
@@ -491,14 +490,14 @@ int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
   }
 
   const fontloader::FontDb *db = fontloader::GetFontDb(decompressed.data());
-  if (db == NULL) {
+  if (db == nullptr) {
     return FL_CORRUPTED;
   }
   if (db->version() != 1) {
     return FL_UNRECOGNIZED;
   }
 
-  FS_Set *s = NULL;
+  FS_Set *s = nullptr;
   r = fs_create(alloc, &s);
   if (r != FL_OK) {
     return r;
@@ -509,7 +508,8 @@ int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
     s->entries.reserve(entries->size());
     for (uint32_t i = 0; i != entries->size(); i++) {
       const auto *entry = entries->Get(i);
-      if (entry == NULL || entry->tag() == NULL || entry->face() == NULL) {
+      if (entry == nullptr || entry->tag() == nullptr ||
+          entry->face() == nullptr) {
         fs_free(s);
         return FL_CORRUPTED;
       }
@@ -543,7 +543,7 @@ int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
 }
 
 int fs_cache_dump(FS_Set *s, const wchar_t *path) {
-  if (s == NULL)
+  if (s == nullptr)
     return FL_OS_ERROR;
 
   DWORD flags = FILE_ATTRIBUTE_NORMAL;
@@ -551,7 +551,8 @@ int fs_cache_dump(FS_Set *s, const wchar_t *path) {
     flags |= FILE_FLAG_DELETE_ON_CLOSE;
 
   HANDLE h = CreateFile(
-      path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, flags, NULL);
+      path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, flags,
+      nullptr);
   if (h == INVALID_HANDLE_VALUE)
     return FL_OS_ERROR;
 
@@ -591,8 +592,8 @@ int fs_cache_dump(FS_Set *s, const wchar_t *path) {
   }
 
   DWORD written = 0;
-  BOOL ok =
-      WriteFile(h, compressed.data(), (DWORD)compressed_size, &written, NULL);
+  BOOL ok = WriteFile(
+      h, compressed.data(), (DWORD)compressed_size, &written, nullptr);
   CloseHandle(h);
   return ok ? FL_OK : FL_OS_ERROR;
 }
@@ -604,7 +605,7 @@ int fs_blacklist_clear(FS_Set *s) {
 }
 
 int fs_blacklist_add(FS_Set *s, const char *path, size_t cch) {
-  if (s == NULL || path == NULL)
+  if (s == nullptr || path == nullptr)
     return 1;
   const size_t len =
       cch ? fs_strnlen(path, cch) : absl::string_view(path).size();
@@ -615,7 +616,7 @@ int fs_blacklist_add(FS_Set *s, const char *path, size_t cch) {
 }
 
 int fs_blacklist_match(FS_Set *s, const char *path) {
-  if (s == NULL || path == NULL)
+  if (s == nullptr || path == nullptr)
     return 0;
   const size_t len_path = absl::string_view(path).size();
   for (const auto &suffix : s->blacklist) {

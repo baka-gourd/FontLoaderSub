@@ -65,7 +65,7 @@ const wchar_t *ass_strnchr(const wchar_t *s, wchar_t ch, size_t cch) {
   for (; s != last && *s != ch; s++) {
     // nop
   }
-  return s == last ? NULL : s;
+  return s == last ? nullptr : s;
 }
 
 size_t ass_strlen(const wchar_t *str) {

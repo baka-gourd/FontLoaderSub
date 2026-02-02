@@ -1,5 +1,4 @@
 #include "path.h"
-#include "path.h"
 
 #include <filesystem>
 #include <system_error>
@@ -8,7 +7,7 @@
 namespace fs = std::filesystem;
 
 int FlResolvePath(const wchar_t *path, std::wstring *out) {
-  if (out == NULL)
+  if (out == nullptr)
     return FL_OUT_OF_MEMORY;
 
   int r = FL_OK;
@@ -16,15 +15,15 @@ int FlResolvePath(const wchar_t *path, std::wstring *out) {
 
   do {
     handle = CreateFile(
-        path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+        path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
       r = FL_OS_ERROR;
       break;
     }
 
     const DWORD name_flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
-    const DWORD size = GetFinalPathNameByHandle(handle, NULL, 0, name_flags);
+    const DWORD size = GetFinalPathNameByHandle(handle, nullptr, 0, name_flags);
     if (size == 0) {
       r = FL_OS_ERROR;
       break;
@@ -48,7 +47,7 @@ int FlResolvePath(const wchar_t *path, std::wstring *out) {
 }
 
 size_t FlPathParent(std::wstring *path) {
-  if (path == NULL)
+  if (path == nullptr)
     return 0;
   const size_t pos = path->find_last_of(L'\\');
   if (pos == std::wstring::npos) {
@@ -60,7 +59,7 @@ size_t FlPathParent(std::wstring *path) {
 }
 
 int FlWalkDir(const wchar_t *path, FL_FileWalkCb callback, void *arg) {
-  if (path == NULL || callback == NULL)
+  if (path == nullptr || callback == nullptr)
     return FL_OS_ERROR;
   std::error_code ec;
   const fs::path in_path(path);

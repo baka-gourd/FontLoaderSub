@@ -4,7 +4,6 @@
 #include <bcrypt.h>
 
 #include <climits>
-#include <cstring>
 #include <string>
 #include <new>
 #include <thread>
@@ -25,7 +24,7 @@
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 
 static std::string fl_utf16_to_utf8_safe(const wchar_t *path) {
-  if (path == NULL)
+  if (path == nullptr)
     return std::string();
   std::string out;
   if (!Utf16ToUtf8(path, &out))
@@ -34,7 +33,7 @@ static std::string fl_utf16_to_utf8_safe(const wchar_t *path) {
 }
 
 static std::string fl_font_key(const char *font, size_t cch) {
-  if (font == NULL || cch == 0)
+  if (font == nullptr || cch == 0)
     return std::string();
   std::wstring wide;
   if (!Utf8ToUtf16(font, cch, &wide))
@@ -56,7 +55,7 @@ int fl_init(FL_LoaderCtx *c, allocator_t *alloc) {
   c->loaded_sub_files.clear();
   c->font_path.clear();
   c->walk_path.clear();
-  c->font_set = NULL;
+  c->font_set = nullptr;
   c->num_sub.store(0, std::memory_order_relaxed);
   c->num_sub_font.store(0, std::memory_order_relaxed);
   c->num_font_loaded.store(0, std::memory_order_relaxed);
@@ -65,17 +64,17 @@ int fl_init(FL_LoaderCtx *c, allocator_t *alloc) {
   c->num_scan_file.store(0, std::memory_order_relaxed);
   c->num_scan_face.store(0, std::memory_order_relaxed);
   c->loaded_font.clear();
-  c->event_cancel = NULL;
-  c->hash_alg = NULL;
+  c->event_cancel = nullptr;
+  c->hash_alg = nullptr;
 
   do {
-    c->event_cancel = CreateEvent(NULL, TRUE, FALSE, NULL);
+    c->event_cancel = CreateEvent(nullptr, TRUE, FALSE, nullptr);
     if (!c->event_cancel) {
       r = FL_OS_ERROR;
       break;
     }
     const NTSTATUS status = BCryptOpenAlgorithmProvider(
-        &c->hash_alg, BCRYPT_SHA256_ALGORITHM, NULL, 0);
+        &c->hash_alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0);
     if (!NT_SUCCESS(status)) {
       r = FL_OS_ERROR;
       break;
@@ -94,11 +93,11 @@ int fl_init(FL_LoaderCtx *c, allocator_t *alloc) {
 int fl_free(FL_LoaderCtx *c) {
   if (c->event_cancel) {
     CloseHandle(c->event_cancel);
-    c->event_cancel = NULL;
+    c->event_cancel = nullptr;
   }
   if (c->hash_alg) {
     BCryptCloseAlgorithmProvider(c->hash_alg, 0);
-    c->hash_alg = NULL;
+    c->hash_alg = nullptr;
   }
   c->loaded_font.clear();
   c->sub_fonts.clear();
@@ -107,14 +106,14 @@ int fl_free(FL_LoaderCtx *c) {
   c->font_path.clear();
   c->walk_path.clear();
   fs_free(c->font_set);
-  c->font_set = NULL;
+  c->font_set = nullptr;
 
   SPDLOG_INFO("fl_free done");
   return FL_OK;
 }
 
 static bool fl_path_to_lower_utf8(const wchar_t *path, std::string *out) {
-  if (path == NULL || out == NULL)
+  if (path == nullptr || out == nullptr)
     return false;
   std::wstring tmp(path);
   if (!tmp.empty()) {
@@ -205,7 +204,7 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   }
 
   memmap_t map;
-  char *content = NULL;
+  char *content = nullptr;
   size_t content_len = 0;
 
   FlMemMap(path, &map);
@@ -221,7 +220,7 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
 
   content =
       FlTextDecode((const uint8_t *)map.data, map.size, &content_len, c->alloc);
-  if (content == NULL) {
+  if (content == nullptr) {
     // ignore error
     FlMemUnmap(&map);
     if (!path_u8.empty()) {
@@ -476,7 +475,7 @@ static void fl_blacklist_load(FL_LoaderCtx *c, const wchar_t *filename) {
   }
   c->walk_path += filename;
   memmap_t map;
-  char *content = NULL;
+  char *content = nullptr;
   size_t content_len = 0;
   do {
     FlMemMap(c->walk_path.c_str(), &map);
@@ -484,7 +483,7 @@ static void fl_blacklist_load(FL_LoaderCtx *c, const wchar_t *filename) {
       break;
     content = FlTextDecode(
         (const uint8_t *)map.data, map.size, &content_len, c->alloc);
-    if (content == NULL)
+    if (content == nullptr)
       break;
     fl_blacklist_parse(c, content, content_len);
 
@@ -503,7 +502,7 @@ int fl_scan_fonts(
 
   // free previous font set
   fs_free(c->font_set);
-  c->font_set = NULL;
+  c->font_set = nullptr;
 
   const std::string path_u8 = fl_utf16_to_utf8_safe(path);
   const std::string cache_u8 = fl_utf16_to_utf8_safe(cache);
@@ -525,8 +524,8 @@ int fl_scan_fonts(
   if (1) {
     HANDLE test = CreateFile(
         c->font_path.c_str(), 0,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (test != INVALID_HANDLE_VALUE) {
       FlPathParent(&c->font_path);
       CloseHandle(test);
@@ -564,7 +563,7 @@ int fl_scan_fonts(
   // failed
   if (r != FL_OK) {
     fs_free(c->font_set);
-    c->font_set = NULL;
+    c->font_set = nullptr;
   }
 
   if (r == FL_OK && c->font_set) {
@@ -612,7 +611,7 @@ static int CALLBACK enum_fonts(
 }
 
 static bool fl_utf8_to_utf16(const char *input, std::wstring *output) {
-  if (input == NULL || output == NULL)
+  if (input == nullptr || output == nullptr)
     return false;
   return Utf8ToUtf16(input, output);
 }
@@ -624,16 +623,16 @@ static int IsFontInstalled(const char *face) {
   if (!fl_utf8_to_utf16(face, &face_w))
     return 0;
   int found = 0;
-  HDC dc = GetDC(0);
+  HDC dc = GetDC(nullptr);
   EnumFontFamiliesW(dc, face_w.c_str(), enum_fonts, (LPARAM)&found);
-  ReleaseDC(0, dc);
+  ReleaseDC(nullptr, dc);
   return found;
 }
 
 static int fl_utf8_casecmp(const char *a, const char *b);
 
 static int fl_face_loaded(FL_LoaderCtx *c, const char *face) {
-  if (face == NULL)
+  if (face == nullptr)
     return 0;
   for (const auto &m : c->loaded_font) {
     if (fl_utf8_casecmp(m.face.c_str(), face) == 0)
@@ -651,9 +650,9 @@ static int fl_file_loaded(FL_LoaderCtx *c, const char *file) {
 }
 
 static int fl_utf8_casecmp(const char *a, const char *b) {
-  if (a == NULL)
+  if (a == nullptr)
     return b ? -1 : 0;
-  if (b == NULL)
+  if (b == nullptr)
     return 1;
   std::wstring wa;
   std::wstring wb;
@@ -692,8 +691,8 @@ static int
 fl_calc_hash(FL_LoaderCtx *c, const void *data, size_t size, uint8_t res[32]) {
   int ok = 0;
   NTSTATUS status;
-  BCRYPT_HASH_HANDLE hash = NULL;
-  void *hash_obj = NULL;
+  BCRYPT_HASH_HANDLE hash = nullptr;
+  void *hash_obj = nullptr;
   DWORD sz_hash_obj = 0;
   DWORD sz_data = 0;
   allocator_t *alloc = c->alloc;
@@ -710,11 +709,11 @@ fl_calc_hash(FL_LoaderCtx *c, const void *data, size_t size, uint8_t res[32]) {
       break;
 
     hash_obj = alloc->alloc(hash_obj, sz_hash_obj, alloc->arg);
-    if (hash_obj == NULL)
+    if (hash_obj == nullptr)
       break;
 
     status = BCryptCreateHash(
-        c->hash_alg, &hash, (PUCHAR)hash_obj, sz_hash_obj, NULL, 0, 0);
+        c->hash_alg, &hash, (PUCHAR)hash_obj, sz_hash_obj, nullptr, 0, 0);
     if (!NT_SUCCESS(status))
       break;
 
@@ -738,7 +737,7 @@ static int
 fl_load_file(FL_LoaderCtx *c, const char *face, const char *file, int *dup) {
   int r = FL_OK;
   int candidate;
-  memmap_t map = {0};
+  memmap_t map = {nullptr};
   uint8_t hash[32];
 
   do {
@@ -770,7 +769,7 @@ fl_load_file(FL_LoaderCtx *c, const char *face, const char *file, int *dup) {
 
     const wchar_t *full_path = c->walk_path.c_str();
     FlMemMap(full_path, &map);
-    if (map.data == NULL) {
+    if (map.data == nullptr) {
       r = FL_OS_ERROR;
       break;
     }
@@ -950,7 +949,7 @@ int fl_load_fonts(FL_LoaderCtx *c) {
     tlx::parallel_mergesort(
         data, data + c->loaded_font.size(),
         [](const FL_FontMatch &a, const FL_FontMatch &b) {
-          return fl_load_rec_sort(&a, &b, NULL) < 0;
+          return fl_load_rec_sort(&a, &b, nullptr) < 0;
         });
   }
 
@@ -1044,7 +1043,7 @@ int fl_load_fonts_incremental(FL_LoaderCtx *c) {
     tlx::parallel_mergesort(
         data, data + c->loaded_font.size(),
         [](const FL_FontMatch &a, const FL_FontMatch &b) {
-          return fl_load_rec_sort(&a, &b, NULL) < 0;
+          return fl_load_rec_sort(&a, &b, nullptr) < 0;
         });
   }
 
@@ -1068,7 +1067,7 @@ int fl_walk_loaded_fonts(FL_LoaderCtx *c, WalkLoadedCallback cb, void *param) {
 
   std::wstring path_buf;
   for (size_t i = 0; i != c->loaded_font.size(); i++) {
-    const wchar_t *path = NULL;
+    const wchar_t *path = nullptr;
     const FL_FontMatch &m = c->loaded_font[i];
     if (!m.filename.empty()) {
       std::wstring file_w;
@@ -1102,7 +1101,7 @@ fl_unload_cb(FL_LoaderCtx *c, size_t i, const wchar_t *path, void *param) {
 
 int fl_unload_fonts(FL_LoaderCtx *c) {
   SPDLOG_INFO("fl_unload_fonts start: total_records={}", c->loaded_font.size());
-  fl_walk_loaded_fonts(c, fl_unload_cb, NULL);
+  fl_walk_loaded_fonts(c, fl_unload_cb, nullptr);
   c->loaded_font.clear();
   c->num_font_loaded.store(0, std::memory_order_relaxed);
   c->num_font_failed.store(0, std::memory_order_relaxed);

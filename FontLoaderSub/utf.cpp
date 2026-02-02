@@ -8,12 +8,10 @@
 #include <simdutf.h>
 #endif
 
-#include <climits>
-
 static_assert(sizeof(wchar_t) == 2, "UTF-16 wchar_t required on Windows");
 
 bool Utf8ToUtf16(const char *input, size_t input_len, std::wstring *output) {
-  if (output == NULL) {
+  if (output == nullptr) {
     return false;
   }
   output->clear();
@@ -41,7 +39,7 @@ bool Utf8ToUtf16(absl::string_view input, std::wstring *output) {
 }
 
 bool Utf8ToUtf16(const char *input, std::wstring *output) {
-  if (input == NULL) {
+  if (input == nullptr) {
     if (output)
       output->clear();
     return false;
@@ -50,7 +48,7 @@ bool Utf8ToUtf16(const char *input, std::wstring *output) {
 }
 
 bool Utf16ToUtf8(const wchar_t *input, size_t input_len, std::string *output) {
-  if (output == NULL) {
+  if (output == nullptr) {
     return false;
   }
   output->clear();
@@ -79,7 +77,7 @@ bool Utf16ToUtf8(std::wstring_view input, std::string *output) {
 }
 
 bool Utf16ToUtf8(const wchar_t *input, std::string *output) {
-  if (input == NULL) {
+  if (input == nullptr) {
     if (output)
       output->clear();
     return false;

@@ -1,6 +1,5 @@
 #include "exporter.h"
 
-#include <cstring>
 #include <string>
 
 #include <Shobjidl.h>
@@ -60,12 +59,12 @@ static HRESULT LFEC_NextOne(LoadedFontEnumCtx *c, IShellItem **item) {
     FL_FontMatch *m = &fl->loaded_font[c->i];
     c->i++;
     if (!m->filename.empty() && (m->flag & FL_LOAD_DUP) == 0) {
-      if (item != NULL) {
+      if (item != nullptr) {
         std::wstring file_w;
         if (!Utf8ToUtf16(m->filename.c_str(), &file_w))
           return E_FAIL;
         return SHCreateItemFromRelativeName(
-            c->root, file_w.c_str(), NULL, IID_IShellItem, (void **)item);
+            c->root, file_w.c_str(), nullptr, IID_IShellItem, (void **)item);
       } else {
         return S_OK;  // simulate create success
       }
@@ -83,7 +82,7 @@ static HRESULT STDMETHODCALLTYPE LFEC_Next(
   ULONG got = 0;
   HRESULT hr = S_FALSE;
   for (ULONG i = 0; i != celt; i++) {
-    hr = LFEC_NextOne(c, rgelt ? &rgelt[got] : NULL);
+    hr = LFEC_NextOne(c, rgelt ? &rgelt[got] : nullptr);
     if (hr == S_FALSE) {
       // no more left
       break;
@@ -94,14 +93,14 @@ static HRESULT STDMETHODCALLTYPE LFEC_Next(
       got++;
     }
   }
-  if (pceltFetched != NULL) {
+  if (pceltFetched != nullptr) {
     *pceltFetched = got;
   }
   return got > 0 ? S_OK : hr;
 }
 
 static HRESULT STDMETHODCALLTYPE LFEC_Skip(IEnumShellItems *This, ULONG celt) {
-  return LFEC_Next(This, celt, NULL, NULL);
+  return LFEC_Next(This, celt, nullptr, nullptr);
 }
 
 static HRESULT STDMETHODCALLTYPE LFEC_Reset(IEnumShellItems *This) {
@@ -114,8 +113,8 @@ static HRESULT STDMETHODCALLTYPE
 LFEC_Clone(IEnumShellItems *This, IEnumShellItems **ppenum) {
   LoadedFontEnumCtx *c = (LoadedFontEnumCtx *)This;
   LoadedFontEnumCtx *that = (LoadedFontEnumCtx *)c->app->alloc->alloc(
-      NULL, sizeof *c, c->app->alloc->arg);
-  if (that == NULL) {
+      nullptr, sizeof *c, c->app->alloc->arg);
+  if (that == nullptr) {
     return E_OUTOFMEMORY;
   }
   that->lpVtbl = c->lpVtbl;
@@ -149,15 +148,15 @@ static HRESULT LFEC_Create(FL_AppCtx *app, IEnumShellItems **ppenum) {
       font_path[0] = L'\\';
     }
   }
-  IShellItem *dir_root = NULL;
+  IShellItem *dir_root = nullptr;
   HRESULT hr = SHCreateItemFromParsingName(
-      font_path.c_str(), NULL, IID_IShellItem, (void **)&dir_root);
+      font_path.c_str(), nullptr, IID_IShellItem, (void **)&dir_root);
   if (FAILED(hr))
     return hr;
 
   LoadedFontEnumCtx *that = (LoadedFontEnumCtx *)app->alloc->alloc(
-      NULL, sizeof *that, app->alloc->arg);
-  if (that == NULL) {
+      nullptr, sizeof *that, app->alloc->arg);
+  if (that == nullptr) {
     dir_root->lpVtbl->Release(dir_root);
     return E_OUTOFMEMORY;
   }
@@ -173,19 +172,19 @@ static HRESULT LFEC_Create(FL_AppCtx *app, IEnumShellItems **ppenum) {
 int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
   int succ = 0;
   HRESULT hr;
-  IFileDialog *pfd = NULL;
+  IFileDialog *pfd = nullptr;
   FILEOPENDIALOGOPTIONS options;
-  IShellItem *dest = NULL;
-  IEnumShellItems *font_enum = NULL;
-  LPWSTR path_name = NULL;
-  IFileOperation *file_opt = NULL;
+  IShellItem *dest = nullptr;
+  IEnumShellItems *font_enum = nullptr;
+  LPWSTR path_name = nullptr;
+  IFileOperation *file_opt = nullptr;
 
   do {
     SPDLOG_INFO("ExportLoadedFonts start");
     // prepare "Select folder" dialog
     hr = CoCreateInstance(
-        CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog,
-        (void **)&pfd);
+        CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+        IID_IFileOpenDialog, (void **)&pfd);
     if (FAILED(hr))
       break;
     hr = pfd->lpVtbl->GetOptions(pfd, &options);
@@ -221,7 +220,7 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
     if (FAILED(hr))
       break;
     hr = CoCreateInstance(
-        CLSID_FileOperation, NULL, CLSCTX_ALL, IID_IFileOperation,
+        CLSID_FileOperation, nullptr, CLSCTX_ALL, IID_IFileOperation,
         (void **)&file_opt);
     if (FAILED(hr))
       break;
@@ -235,7 +234,7 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
     if (FAILED(hr))
       break;
 
-    ShellExecute(NULL, NULL, path_name, NULL, NULL, SW_SHOW);
+    ShellExecute(nullptr, nullptr, path_name, nullptr, nullptr, SW_SHOW);
     SPDLOG_INFO("ExportLoadedFonts done");
     succ = 1;
   } while (0);
@@ -248,8 +247,8 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
   if (!succ) {
     SPDLOG_ERROR("ExportLoadedFonts failed");
     TaskDialog(
-        NULL, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...", NULL,
-        TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, NULL);
+        nullptr, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...",
+        nullptr, TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
   }
   return 0;
 }

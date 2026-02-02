@@ -6,6 +6,6 @@ static int null_cb(const char *font, size_t cch, void *arg) {
 
 int test_main() {
   const char data[] = "\xEF\xBB\xBF[Events]\r\n";
-  ass_process_data(data, sizeof data - 1, null_cb, NULL);
+  ass_process_data(data, sizeof data - 1, null_cb, nullptr);
   return 1;
 }

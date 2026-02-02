@@ -1,14 +1,12 @@
 #include "main.h"
 
 #include <atomic>
-#include <cstring>
 #include <string>
 
 #include "ass_string.h"
 #include "exporter.h"
 #include "log.h"
 #include "util.h"
-#include "path.h"
 #include "shortcut.h"
 #include "mock_config.h"
 #include "res/resource.h"
@@ -18,7 +16,7 @@
 #define kBlackFile L"fc-ignore.txt"
 #define kMessageWindowClass L"FontLoaderSubMessageWindow"
 
-static DWORD WINAPI AppWorker(LPVOID param);
+static DWORD WINAPI app_worker(LPVOID param);
 static LRESULT CALLBACK DoneDialogSubclassProc(
     HWND hWnd,
     UINT uMsg,
@@ -29,12 +27,12 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
 
 static std::wstring NormalizeSubtitlePath(const wchar_t *filePath) {
   wchar_t fullPath[MAX_PATH * 2];
-  if (GetFullPathName(filePath, _countof(fullPath), fullPath, NULL) == 0) {
-    return std::wstring();
+  if (GetFullPathName(filePath, _countof(fullPath), fullPath, nullptr) == 0) {
+    return {};
   }
   std::wstring normalized(fullPath);
   if (!normalized.empty()) {
-    CharLowerBuffW(&normalized[0], (DWORD)normalized.size());
+    CharLowerBuffW(&normalized[0], static_cast<DWORD>(normalized.size()));
   }
   return normalized;
 }
@@ -54,12 +52,12 @@ static int AddSubtitleFileToLoaded(FL_AppCtx *c, const wchar_t *filePath) {
 }
 
 static void *mem_realloc(void *existing, size_t size, void *arg) {
-  HANDLE heap = (HANDLE)arg;
+  auto heap = (HANDLE)arg;
   if (size == 0) {
     HeapFree(heap, 0, existing);
-    return NULL;
+    return nullptr;
   }
-  if (existing == NULL) {
+  if (existing == nullptr) {
     return HeapAlloc(heap, HEAP_ZERO_MEMORY, size);
   }
   return HeapReAlloc(heap, HEAP_ZERO_MEMORY, existing, size);
@@ -67,14 +65,14 @@ static void *mem_realloc(void *existing, size_t size, void *arg) {
 
 static LRESULT CALLBACK
 MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-  FL_AppCtx *c = (FL_AppCtx *)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+  auto c = (FL_AppCtx *)GetWindowLongPtr(hWnd, GWLP_USERDATA);
 
   switch (uMsg) {
   case WM_CREATE:
     return 0;
   case WM_DROPFILES:
     if (c && c->app_state == APP_DONE) {
-      HDROP hDrop = (HDROP)wParam;
+      auto hDrop = (HDROP)wParam;
       if (InterlockedExchange(&c->drop_guard, 1) != 0) {
         DragFinish(hDrop);
         return 0;
@@ -86,11 +84,11 @@ MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         return 0;
       }
       c->last_drop_tick = now_tick;
-      UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, NULL, 0);
+      UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, nullptr, 0);
       int has_new_files = 0;
 
       for (UINT i = 0; i < fileCount; i++) {
-        UINT fileNameLen = DragQueryFile(hDrop, i, NULL, 0);
+        UINT fileNameLen = DragQueryFile(hDrop, i, nullptr, 0);
         if (fileNameLen > 0) {
           std::wstring fileName;
           fileName.resize(fileNameLen + 1);
@@ -134,7 +132,7 @@ MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 
       // Only reload if we have new files
       if (has_new_files) {
-        if (c->thread_load != NULL &&
+        if (c->thread_load != nullptr &&
             WaitForSingleObject(c->thread_load, 0) == WAIT_TIMEOUT) {
           SPDLOG_INFO("Drop ignored: worker already running");
           InterlockedExchange(&c->drop_guard, 0);
@@ -147,8 +145,8 @@ MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         c->req_exit = 0;
 
         DWORD thread_id;
-        c->thread_load = CreateThread(NULL, 0, AppWorker, c, 0, &thread_id);
-        if (c->thread_load != NULL && c->work_hwnd) {
+        c->thread_load = CreateThread(nullptr, 0, app_worker, c, 0, &thread_id);
+        if (c->thread_load != nullptr && c->work_hwnd) {
           SendMessage(c->work_hwnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
         }
       }
@@ -174,12 +172,12 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
     LPARAM lParam,
     UINT_PTR uIdSubclass,
     DWORD_PTR dwRefData) {
-  FL_AppCtx *c = (FL_AppCtx *)dwRefData;
+  auto c = (FL_AppCtx *)dwRefData;
 
   switch (uMsg) {
   case WM_DROPFILES:
     if (c && c->app_state == APP_DONE) {
-      HDROP hDrop = (HDROP)wParam;
+      auto hDrop = (HDROP)wParam;
       if (InterlockedExchange(&c->drop_guard, 1) != 0) {
         DragFinish(hDrop);
         return 0;
@@ -191,11 +189,11 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
         return 0;
       }
       c->last_drop_tick = now_tick;
-      UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, NULL, 0);
+      UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, nullptr, 0);
       int has_new_files = 0;
 
       for (UINT i = 0; i < fileCount; i++) {
-        UINT fileNameLen = DragQueryFile(hDrop, i, NULL, 0);
+        UINT fileNameLen = DragQueryFile(hDrop, i, nullptr, 0);
         if (fileNameLen > 0) {
           std::wstring fileName;
           fileName.resize(fileNameLen + 1);
@@ -240,7 +238,7 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
 
       // Only reload if we have new files
       if (has_new_files) {
-        if (c->thread_load != NULL &&
+        if (c->thread_load != nullptr &&
             WaitForSingleObject(c->thread_load, 0) == WAIT_TIMEOUT) {
           SPDLOG_INFO("Drop ignored: worker already running");
           InterlockedExchange(&c->drop_guard, 0);
@@ -256,8 +254,8 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
         DragAcceptFiles(hWnd, FALSE);
 
         DWORD thread_id;
-        c->thread_load = CreateThread(NULL, 0, AppWorker, c, 0, &thread_id);
-        if (c->thread_load != NULL) {
+        c->thread_load = CreateThread(nullptr, 0, app_worker, c, 0, &thread_id);
+        if (c->thread_load != nullptr) {
           SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
         }
       }
@@ -284,9 +282,9 @@ static int AppCreateMessageWindow(FL_AppCtx *c) {
 
   c->hwnd_message = CreateWindowExW(
       0, kMessageWindowClass, L"FontLoaderSubMessageWindow", 0, 0, 0, 0, 0,
-      HWND_MESSAGE, NULL, c->hInst, NULL);
+      HWND_MESSAGE, nullptr, c->hInst, nullptr);
 
-  if (c->hwnd_message == NULL) {
+  if (c->hwnd_message == nullptr) {
     return 0;
   }
 
@@ -297,7 +295,7 @@ static int AppCreateMessageWindow(FL_AppCtx *c) {
 static void AppHelpUsage(FL_AppCtx *c, HWND hWnd) {
   c->show_shortcut = 0;
   c->dlg_help.hwndParent = hWnd;
-  TaskDialogIndirect(&c->dlg_help, NULL, NULL, NULL);
+  TaskDialogIndirect(&c->dlg_help, nullptr, nullptr, nullptr);
   if (c->show_shortcut) {
     ShortcutShow(&c->shortcut, hWnd);
   }
@@ -363,7 +361,7 @@ static int AppUpdateStatus(FL_AppCtx *c) {
   FormatMessage(
       FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY,
       ResLoadString(c->hInst, IDS_LOAD_STAT), 0, 0, c->status_txt,
-      _countof(c->status_txt), (va_list *)args);
+      _countof(c->status_txt), reinterpret_cast<va_list *>(args));
 
   LPARAM cap_id;
   if (c->cancelled || c->app_state == APP_CANCELLED) {
@@ -374,13 +372,14 @@ static int AppUpdateStatus(FL_AppCtx *c) {
 
   SendMessage(c->work_hwnd, TDM_SET_ELEMENT_TEXT, TDE_MAIN_INSTRUCTION, cap_id);
   SendMessage(
-      c->work_hwnd, TDM_SET_ELEMENT_TEXT, TDE_CONTENT, (LPARAM)c->status_txt);
+      c->work_hwnd, TDM_SET_ELEMENT_TEXT, TDE_CONTENT,
+      reinterpret_cast<LPARAM>(c->status_txt));
 
   return 0;
 }
 
-static DWORD WINAPI AppWorker(LPVOID param) {
-  FL_AppCtx *c = (FL_AppCtx *)param;
+static DWORD WINAPI app_worker(LPVOID param) {
+  auto c = static_cast<FL_AppCtx *>(param);
   int r = FL_OK;
   SPDLOG_INFO("AppWorker start");
   while (r == FL_OK && !c->cancelled && c->app_state != APP_DONE) {
@@ -388,9 +387,9 @@ static DWORD WINAPI AppWorker(LPVOID param) {
     case APP_LOAD_SUB: {
       SPDLOG_INFO("State: APP_LOAD_SUB");
       if (MOCK_SUB_PATH) {
-        r = fl_add_subs(&c->loader, MOCK_SUB_PATH);
+        r = fl_add_subs(&c->loader, nullptr);
         if (r == FL_OK) {
-          AddSubtitleFileToLoaded(c, MOCK_SUB_PATH);
+          AddSubtitleFileToLoaded(c, nullptr);
         }
       }
       for (int i = 1; i < c->argc && r == FL_OK; i++) {
@@ -418,8 +417,8 @@ static DWORD WINAPI AppWorker(LPVOID param) {
     }
     case APP_SCAN_FONT: {
       SPDLOG_INFO("State: APP_SCAN_FONT");
-      if (fl_scan_fonts(&c->loader, c->font_path.c_str(), NULL, kBlackFile) ==
-          FL_OK) {
+      if (fl_scan_fonts(
+              &c->loader, c->font_path.c_str(), nullptr, kBlackFile) == FL_OK) {
         fl_save_cache(&c->loader, kCacheFile);
       }
       c->app_state = APP_LOAD_FONT;
@@ -466,9 +465,9 @@ static DWORD WINAPI AppWorker(LPVOID param) {
 }
 
 static DWORD WINAPI AppCacheWorker(LPVOID param) {
-  FL_AppCtx *c = (FL_AppCtx *)param;
+  auto c = static_cast<FL_AppCtx *>(param);
 
-  while (1) {
+  while (true) {
     fl_cache_fonts(&c->loader, c->evt_stop_cache);
     if (WaitForSingleObject(c->evt_stop_cache, 5 * 60 * 1000) != WAIT_TIMEOUT)
       break;
@@ -482,23 +481,23 @@ static HRESULT CALLBACK DlgWorkProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
-  FL_AppCtx *c = (FL_AppCtx *)dwRefData;
+  auto c = (FL_AppCtx *)dwRefData;
   int navigated = 0;
   if (uNotification == TDN_CREATED || uNotification == TDN_NAVIGATED) {
     c->work_hwnd = hWnd;
     SendMessage(hWnd, TDM_SET_PROGRESS_BAR_MARQUEE, TRUE, 0);
 
-    if (c->thread_load != NULL) {
+    if (c->thread_load != nullptr) {
       DWORD r = WaitForSingleObject(c->thread_load, 0);
       if (r != WAIT_TIMEOUT) {
         CloseHandle(c->thread_load);
-        c->thread_load = NULL;
+        c->thread_load = nullptr;
       }
     }
-    if (c->thread_load == NULL) {
+    if (c->thread_load == nullptr) {
       DWORD thread_id;
-      c->thread_load = CreateThread(NULL, 0, AppWorker, c, 0, &thread_id);
-      if (c->thread_load == NULL) {
+      c->thread_load = CreateThread(nullptr, 0, app_worker, c, 0, &thread_id);
+      if (c->thread_load == nullptr) {
         // fatal error, try exit early
         c->cancelled = 1;
         c->app_state = APP_CANCELLED;
@@ -520,7 +519,7 @@ static HRESULT CALLBACK DlgWorkProc(
     if (r != WAIT_TIMEOUT) {
       // worker exited
       CloseHandle(c->thread_load);
-      c->thread_load = NULL;
+      c->thread_load = nullptr;
       if (c->taskbar_list3) {
         c->taskbar_list3->lpVtbl->SetProgressState(
             c->taskbar_list3, hWnd, TBPF_NOPROGRESS);
@@ -532,7 +531,7 @@ static HRESULT CALLBACK DlgWorkProc(
           if (AppBuildLog(c)) {
             c->dlg_done.pszExpandedInformation = c->log.c_str();
           } else {
-            c->dlg_done.pszExpandedInformation = NULL;
+            c->dlg_done.pszExpandedInformation = nullptr;
           }
           AppUpdateStatus(c);
           c->dlg_done.pszContent = c->status_txt;
@@ -550,7 +549,7 @@ static HRESULT CALLBACK DlgWorkProc(
           // it's an error
           TaskDialog(
               hWnd, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...",
-              NULL, TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, NULL);
+              nullptr, TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
         }
         PostMessage(hWnd, WM_CLOSE, 0, 0);
       }
@@ -573,7 +572,7 @@ static HRESULT CALLBACK DlgHelpProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
-  FL_AppCtx *c = (FL_AppCtx *)dwRefData;
+  auto c = (FL_AppCtx *)dwRefData;
   if (uNotification == TDN_HYPERLINK_CLICKED) {
     PostMessage(hWnd, WM_CLOSE, 0, 0);
     c->show_shortcut = 1;
@@ -603,7 +602,7 @@ static HRESULT CALLBACK DlgDoneButtonDispatch(
       TerminateThread(c->thread_cache, 2);
     }
     CloseHandle(c->thread_cache);
-    c->thread_cache = NULL;
+    c->thread_cache = nullptr;
     c->app_state = APP_UNLOAD_FONT;
     SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
     return S_FALSE;
@@ -624,7 +623,7 @@ static HRESULT CALLBACK DlgDoneButtonDispatch(
       GetCursorPos(&pt);
     }
     BOOL r = TrackPopupMenu(
-        menu, TPM_NONOTIFY | TPM_RETURNCMD, pt.x, pt.y, 0, hWnd, NULL);
+        menu, TPM_NONOTIFY | TPM_RETURNCMD, pt.x, pt.y, 0, hWnd, nullptr);
     if (r != FALSE) {
       return DlgDoneButtonDispatch(hWnd, uNotification, r, lParam, c);
     }
@@ -645,14 +644,13 @@ static HRESULT CALLBACK DlgDoneButtonDispatch(
 }
 
 static BOOL CALLBACK DlgDoneFindMenuBtnCb(HWND hWnd, LPARAM lParam) {
-  FL_AppCtx *c = (FL_AppCtx *)lParam;
+  auto c = reinterpret_cast<FL_AppCtx *>(lParam);
   WCHAR buffer[16];
   const WCHAR *target = ResLoadString(c->hInst, IDS_MENU);
-  if (target == NULL) {
+  if (target == nullptr) {
     return FALSE;  // stop! we are in trouble
   }
-  int len = GetWindowText(hWnd, buffer, _countof(buffer));
-  if (len != 0) {
+  if (const int len = GetWindowText(hWnd, buffer, _countof(buffer)); len != 0) {
     if (ass_strncmp(buffer, target, len + 1) == 0) {
       c->handle_btn_menu = hWnd;
       return FALSE;
@@ -667,9 +665,9 @@ static HRESULT CALLBACK DlgDoneProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
-  FL_AppCtx *c = (FL_AppCtx *)dwRefData;
+  auto c = (FL_AppCtx *)dwRefData;
   if (uNotification == TDN_NAVIGATED) {
-    c->thread_cache = NULL;
+    c->thread_cache = nullptr;
 
     FS_Stat stat = {0};
     fs_stat(c->loader.font_set, &stat);
@@ -681,11 +679,12 @@ static HRESULT CALLBACK DlgDoneProc(
       DWORD thread_id;
       EnableMenuItem(c->btn_menu, ID_BTN_EXPORT, MF_BYCOMMAND | MF_ENABLED);
       ResetEvent(c->evt_stop_cache);
-      c->thread_cache = CreateThread(NULL, 0, AppCacheWorker, c, 0, &thread_id);
+      c->thread_cache =
+          CreateThread(nullptr, 0, AppCacheWorker, c, 0, &thread_id);
     }
 
     // find the "Menu" button
-    c->handle_btn_menu = NULL;
+    c->handle_btn_menu = nullptr;
     EnumChildWindows(hWnd, DlgDoneFindMenuBtnCb, (LPARAM)c);
 
     // Install subclass to handle drag-drop
@@ -699,8 +698,8 @@ static HRESULT CALLBACK DlgDoneProc(
     DragAcceptFiles(hWnd, FALSE);
   } else if (uNotification == TDN_HYPERLINK_CLICKED) {
     // the only URL is the github repo
-    const WCHAR *url = L"https://github.com/baka-gourd/FontLoaderSub";
-    ShellExecute(NULL, NULL, url, NULL, NULL, SW_SHOW);
+    auto url = L"https://github.com/baka-gourd/FontLoaderSub";
+    ShellExecute(nullptr, nullptr, url, nullptr, nullptr, SW_SHOW);
   } else if (uNotification == TDN_BUTTON_CLICKED) {
     return DlgDoneButtonDispatch(hWnd, uNotification, wParam, lParam, c);
   }
@@ -733,7 +732,8 @@ static TASKDIALOGCONFIG MakeDlgDoneTemplate() {
   cfg.pszFooterIcon = TD_SHIELD_ICON;
   cfg.pszFooter = L"GPLv2: <A>github.com/yzwduck/FontLoaderSub</A>";
   cfg.pfCallback = DlgDoneProc;
-  cfg.cButtons = (UINT)(sizeof(kDlgDoneButtons) / sizeof(kDlgDoneButtons[0]));
+  cfg.cButtons =
+      static_cast<UINT>(sizeof(kDlgDoneButtons) / sizeof(kDlgDoneButtons[0]));
   cfg.pButtons = kDlgDoneButtons;
   cfg.nDefaultButton = IDOK;
   return cfg;
@@ -774,20 +774,20 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->dlg_help.lpCallbackData = (LONG_PTR)c;
 
   c->btn_menu = LoadMenu(hInst, MAKEINTRESOURCE(IDR_BTN_MENU));
-  if (c->btn_menu == NULL) {
+  if (c->btn_menu == nullptr) {
     SPDLOG_ERROR("LoadMenu failed");
     return 0;
   }
 
   c->argv = CommandLineToArgvW(GetCommandLine(), &c->argc);
-  if (c->argv == NULL) {
+  if (c->argv == nullptr) {
     SPDLOG_ERROR("CommandLineToArgvW failed");
     return 0;
   }
   DWORD initial = MAX_PATH;
   while (1) {
     c->full_exe_path.resize(initial);
-    DWORD ret = GetModuleFileName(NULL, &c->full_exe_path[0], initial);
+    DWORD ret = GetModuleFileName(nullptr, &c->full_exe_path[0], initial);
     if (ret == 0) {
       SPDLOG_ERROR("GetModuleFileName failed");
       return 0;
@@ -818,10 +818,10 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->font_path = c->full_exe_path;
 
   if (MOCK_FONT_PATH != NULL)
-    c->font_path.assign(MOCK_FONT_PATH);
+    c->font_path.assign(nullptr);
 
-  c->evt_stop_cache = CreateEvent(NULL, TRUE, FALSE, NULL);
-  if (c->evt_stop_cache == NULL) {
+  c->evt_stop_cache = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+  if (c->evt_stop_cache == nullptr) {
     SPDLOG_ERROR("CreateEvent for cache failed");
     return 0;
   }
@@ -836,7 +836,7 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
           (void **)&c->taskbar_list3))) {
     if (FAILED(c->taskbar_list3->lpVtbl->HrInit(c->taskbar_list3))) {
       c->taskbar_list3->lpVtbl->Release(c->taskbar_list3);
-      c->taskbar_list3 = NULL;
+      c->taskbar_list3 = nullptr;
     }
   }
 
@@ -847,11 +847,11 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
 static int AppRun(FL_AppCtx *c) {
   SPDLOG_INFO("AppRun start");
   if (0 && GetAsyncKeyState(VK_SHIFT)) {
-    ShortcutShow(&c->shortcut, NULL);
+    ShortcutShow(&c->shortcut, nullptr);
     return 0;
   }
 
-  TaskDialogIndirect(&c->dlg_work, NULL, NULL, NULL);
+  TaskDialogIndirect(&c->dlg_work, nullptr, nullptr, nullptr);
 
   // clean up
   if (WaitForSingleObject(c->thread_load, 16384) == WAIT_TIMEOUT) {
@@ -867,7 +867,7 @@ static int AppRun(FL_AppCtx *c) {
 
   // Message loop for the hidden window
   MSG msg;
-  while (GetMessage(&msg, NULL, 0, 0)) {
+  while (GetMessage(&msg, nullptr, 0, 0)) {
     TranslateMessage(&msg);
     DispatchMessage(&msg);
   }
@@ -886,7 +886,7 @@ int WINAPI _tWinMain(
     LPTSTR lpCmdLine,
     int nCmdShow) {
   PerMonitorDpiHack();
-  if (CoInitializeEx(NULL, COINIT_APARTMENTTHREADED) != S_OK) {
+  if (CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED) != S_OK) {
     return 0;
   }
 
@@ -897,10 +897,10 @@ int WINAPI _tWinMain(
   fl_log::Init();
   SPDLOG_INFO("FontLoaderSub start, pid={}", GetCurrentProcessId());
   FL_AppCtx *ctx = &g_app;
-  if (ctx == NULL || !AppInit(ctx, hInstance, &alloc)) {
+  if (ctx == nullptr || !AppInit(ctx, hInstance, &alloc)) {
     TaskDialog(
-        NULL, hInstance, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...", NULL,
-        TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, NULL);
+        nullptr, hInstance, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...",
+        nullptr, TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
     SPDLOG_ERROR("AppInit failed");
     fl_log::Shutdown();
     return 1;
@@ -918,7 +918,7 @@ int WINAPI _tWinMain(
 
   if (ctx->hwnd_message) {
     DestroyWindow(ctx->hwnd_message);
-    ctx->hwnd_message = NULL;
+    ctx->hwnd_message = nullptr;
   }
 
   SPDLOG_INFO("FontLoaderSub exit");
@@ -929,7 +929,7 @@ int WINAPI _tWinMain(
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 void MyEntryPoint() {
-  UINT uRetCode;
-  uRetCode = _tWinMain((HINSTANCE)&__ImageBase, NULL, NULL, SW_SHOWDEFAULT);
-  ExitProcess(uRetCode);
+  const UINT u_ret_code =
+      _tWinMain((HINSTANCE)&__ImageBase, nullptr, nullptr, SW_SHOWDEFAULT);
+  ExitProcess(u_ret_code);
 }

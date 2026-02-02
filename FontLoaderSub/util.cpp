@@ -1,5 +1,4 @@
 #include "util.h"
-#include "util.h"
 
 #include <Windows.h>
 #include <Shlwapi.h>
@@ -10,28 +9,28 @@
 #pragma intrinsic(__stosb)
 
 int FlMemMap(const wchar_t *path, memmap_t *mmap) {
-  mmap->map = NULL;
-  mmap->data = NULL;
+  mmap->map = nullptr;
+  mmap->data = nullptr;
   mmap->size = 0;
   HANDLE h;
   do {
     h = CreateFile(
-        path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL,
-        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE)
       break;
-    mmap->map = CreateFileMapping(h, NULL, PAGE_READONLY, 0, 0, NULL);
-    if (mmap->map == NULL)
+    mmap->map = CreateFileMapping(h, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    if (mmap->map == nullptr)
       break;
     mmap->data = MapViewOfFile(mmap->map, FILE_MAP_READ, 0, 0, 0);
-    if (mmap->data == NULL)
+    if (mmap->data == nullptr)
       break;
     DWORD high = 0;
     mmap->size = GetFileSize(h, &high);
     // mmap->size = (high * 0x100000000UL) | (mmap->size);
   } while (0);
 
-  if (mmap->data == NULL) {
+  if (mmap->data == nullptr) {
     FlMemUnmap(mmap);
   }
   CloseHandle(h);
@@ -41,8 +40,8 @@ int FlMemMap(const wchar_t *path, memmap_t *mmap) {
 int FlMemUnmap(memmap_t *mmap) {
   UnmapViewOfFile(mmap->data);
   CloseHandle(mmap->map);
-  mmap->map = NULL;
-  mmap->data = NULL;
+  mmap->map = nullptr;
+  mmap->data = nullptr;
   mmap->size = 0;
   return 0;
 }
@@ -77,7 +76,7 @@ static int FlTestUtf8(const uint8_t *buffer, size_t size) {
 }
 
 static bool FlToInt(size_t value, int *out) {
-  if (out == NULL)
+  if (out == nullptr)
     return false;
   if (value > (size_t)INT_MAX) {
     *out = 0;
@@ -93,20 +92,20 @@ static wchar_t *FlTextTryDecodeWide(
     size_t bytes,
     size_t *cch,
     allocator_t *alloc) {
-  wchar_t *buf = NULL;
+  wchar_t *buf = nullptr;
   int ok = 0;
   int in_len = 0;
   do {
     if (!FlToInt(bytes, &in_len))
       break;
-    const int r =
-        MultiByteToWideChar(codepage, 0, (const char *)mstr, in_len, NULL, 0);
+    const int r = MultiByteToWideChar(
+        codepage, 0, (const char *)mstr, in_len, nullptr, 0);
     *cch = r;
     if (r == 0)
       break;
 
     buf = (wchar_t *)alloc->alloc(buf, (r + 1) * sizeof buf[0], alloc->arg);
-    if (buf == NULL)
+    if (buf == nullptr)
       break;
 
     const int new_r =
@@ -119,7 +118,7 @@ static wchar_t *FlTextTryDecodeWide(
 
   if (!ok) {
     alloc->alloc(buf, 0, alloc->arg);
-    buf = NULL;
+    buf = nullptr;
   }
   return buf;
 }
@@ -131,13 +130,13 @@ static wchar_t *FlTextDecodeUtf16(
     size_t *cch,
     allocator_t *alloc) {
   const wchar_t *wstr = (const wchar_t *)mstr;
-  wchar_t *buf = NULL;
+  wchar_t *buf = nullptr;
   int ok = 0;
 
   do {
     const size_t r = *cch = bytes / 2;
     buf = (wchar_t *)alloc->alloc(buf, (r + 1) * sizeof buf[0], alloc->arg);
-    if (buf == NULL)
+    if (buf == nullptr)
       break;
 
     for (size_t i = 0; i != r; i++) {
@@ -149,7 +148,7 @@ static wchar_t *FlTextDecodeUtf16(
 
   if (!ok) {
     alloc->alloc(buf, 0, alloc->arg);
-    buf = NULL;
+    buf = nullptr;
   }
   return buf;
 }
@@ -159,9 +158,9 @@ static char *FlTextCopyUtf8(
     size_t bytes,
     size_t *len,
     allocator_t *alloc) {
-  char *buf = (char *)alloc->alloc(NULL, bytes + 1, alloc->arg);
-  if (buf == NULL)
-    return NULL;
+  char *buf = (char *)alloc->alloc(nullptr, bytes + 1, alloc->arg);
+  if (buf == nullptr)
+    return nullptr;
   zmemcpy(buf, mstr, bytes);
   buf[bytes] = 0;
   if (len)
@@ -176,22 +175,22 @@ static char *FlTextFromWide(
     allocator_t *alloc) {
   int in_len = 0;
   if (!FlToInt(cch, &in_len))
-    return NULL;
+    return nullptr;
 
-  const int needed =
-      WideCharToMultiByte(CP_UTF8, 0, wstr, in_len, NULL, 0, NULL, NULL);
+  const int needed = WideCharToMultiByte(
+      CP_UTF8, 0, wstr, in_len, nullptr, 0, nullptr, nullptr);
   if (needed <= 0)
-    return NULL;
+    return nullptr;
 
-  char *buf = (char *)alloc->alloc(NULL, needed + 1, alloc->arg);
-  if (buf == NULL)
-    return NULL;
+  char *buf = (char *)alloc->alloc(nullptr, needed + 1, alloc->arg);
+  if (buf == nullptr)
+    return nullptr;
 
-  const int written =
-      WideCharToMultiByte(CP_UTF8, 0, wstr, in_len, buf, needed, NULL, NULL);
+  const int written = WideCharToMultiByte(
+      CP_UTF8, 0, wstr, in_len, buf, needed, nullptr, nullptr);
   if (written <= 0) {
     alloc->alloc(buf, 0, alloc->arg);
-    return NULL;
+    return nullptr;
   }
   buf[written] = 0;
   if (len)
@@ -204,7 +203,7 @@ char *FlTextDecode(
     size_t bytes,
     size_t *len,
     allocator_t *alloc) {
-  char *res = NULL;
+  char *res = nullptr;
   if (bytes == 0)
     return res;
 
@@ -256,9 +255,9 @@ int FlVersionCmp(const wchar_t *a, const wchar_t *b) {
   const wchar_t *ptr_a = a, *ptr_b = b;
   int cmp = 0;
 
-  if (b == NULL)
+  if (b == nullptr)
     return 1;
-  if (a == NULL)
+  if (a == nullptr)
     return -1;
 
   while (*ptr_a && *ptr_b && cmp == 0) {
@@ -316,14 +315,14 @@ BOOL PerMonitorDpiHack() {
   typedef BOOL(WINAPI * PFN_SetProcessDPIAware)(VOID);
   typedef HRESULT(WINAPI * PFN_SetProcessDpiAwareness)(PROCESS_DPI_AWARENESS);
   typedef BOOL(WINAPI * PFN_EnablePerMonitorDialogScaling)();
-  PFN_SetProcessDpiAwarenessContext pSetProcessDpiAwarenessContext = NULL;
-  PFN_EnablePerMonitorDialogScaling pEnablePerMonitorDialogScaling = NULL;
-  PFN_SetProcessDPIAware pSetProcessDPIAware = NULL;
-  PFN_SetProcessDpiAwareness pSetProcessDpiAwareness = NULL;
+  PFN_SetProcessDpiAwarenessContext pSetProcessDpiAwarenessContext = nullptr;
+  PFN_EnablePerMonitorDialogScaling pEnablePerMonitorDialogScaling = nullptr;
+  PFN_SetProcessDPIAware pSetProcessDPIAware = nullptr;
+  PFN_SetProcessDpiAwareness pSetProcessDpiAwareness = nullptr;
   DWORD result = 0;
 
   HMODULE user32 = GetModuleHandle(L"USER32");
-  if (user32 == NULL)
+  if (user32 == nullptr)
     return FALSE;
 
   pSetProcessDpiAwarenessContext =
@@ -335,7 +334,7 @@ BOOL PerMonitorDpiHack() {
       (PFN_EnablePerMonitorDialogScaling)GetProcAddress(
           user32, "EnablePerMonitorDialogScaling");
   */
-  if (pEnablePerMonitorDialogScaling == NULL) {
+  if (pEnablePerMonitorDialogScaling == nullptr) {
     // attempt 2:
     pEnablePerMonitorDialogScaling =
         (PFN_EnablePerMonitorDialogScaling)GetProcAddress(user32, (LPCSTR)2577);
@@ -365,9 +364,9 @@ BOOL PerMonitorDpiHack() {
 
 const TCHAR *ResLoadString(HMODULE hInstance, UINT idText) {
   int res;
-  const TCHAR *textptr = NULL;
+  const TCHAR *textptr = nullptr;
   res = LoadString(hInstance, idText, (TCHAR *)&textptr, 0);
-  if (textptr == NULL) {
+  if (textptr == nullptr) {
     // logA("Failed to load res string");
     textptr = L"";  // failback
   }

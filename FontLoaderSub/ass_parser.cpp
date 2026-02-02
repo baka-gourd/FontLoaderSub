@@ -96,7 +96,7 @@ static const char *ass8_strnchr(const char *s, char ch, size_t cch) {
   for (; s != last && *s != ch; s++) {
     // nop
   }
-  return s == last ? NULL : s;
+  return s == last ? nullptr : s;
 }
 
 static void fire_font_cb(ASS_Track *track, ASS_U8Range *font) {
@@ -160,7 +160,7 @@ parse_tags(ASS_Track *track, const char *p, const char *end, int nested) {
     const char *name_end = q;
 
     // Split parenthesized arguments
-    ASS_U8Range first_arg = {NULL, NULL};
+    ASS_U8Range first_arg = {nullptr, nullptr};
     if (q != end && *q == '(') {
       ++q;
       while (1) {
@@ -177,7 +177,7 @@ parse_tags(ASS_Track *track, const char *p, const char *end, int nested) {
           while (r != end && *r != ')')
             ++r;
           // push_arg(args, &argc, q, r);
-          if (first_arg.begin == NULL) {
+          if (first_arg.begin == nullptr) {
             first_arg.begin = q;
             first_arg.end = r;
           }
@@ -205,7 +205,7 @@ parse_tags(ASS_Track *track, const char *p, const char *end, int nested) {
 }
 
 static void parse_events(ASS_Track *track, ASS_Event *event) {
-  if (event->Text.begin == NULL) {
+  if (event->Text.begin == nullptr) {
     return;
   }
 
@@ -213,8 +213,8 @@ static void parse_events(ASS_Track *track, ASS_Event *event) {
   const char *ep = event->Text.end;
   const char *q;
 
-  while ((p = ass8_strnchr(p, '{', ep - p)) != NULL &&
-         (q = ass8_strnchr(p, '}', ep - p)) != NULL) {
+  while ((p = ass8_strnchr(p, '{', ep - p)) != nullptr &&
+         (q = ass8_strnchr(p, '}', ep - p)) != nullptr) {
     p = parse_tags(track, p, q, 0);
     ++p;
   }
@@ -322,8 +322,8 @@ static void process_line(ASS_Track *track, const char *begin, const char *end) {
   }
 
   if (!is_content) {
-    track->format_string.begin = NULL;
-    track->format_string.end = NULL;
+    track->format_string.begin = nullptr;
+    track->format_string.end = nullptr;
   } else {
     switch (track->state) {
     case PST_STYLES:
