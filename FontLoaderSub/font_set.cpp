@@ -18,6 +18,8 @@
 
 #include <zstd.h>
 
+#include <tlx/sort/parallel_mergesort.hpp>
+
 typedef struct {
   std::string ver;
   uint16_t ver_lang_id;
@@ -342,11 +344,14 @@ int fs_build_index(FS_Set *s) {
     s->index_vec.push_back(idx);
   }
 
-  std::sort(
-      s->index_vec.begin(), s->index_vec.end(),
-      [](const FS_Index &a, const FS_Index &b) {
-        return fs_idx_comp(a, b) < 0;
-      });
+  if (s->index_vec.size() > 1) {
+    FS_Index *data = s->index_vec.data();
+    tlx::parallel_mergesort(
+        data, data + s->index_vec.size(),
+        [](const FS_Index &a, const FS_Index &b) {
+          return fs_idx_comp(a, b) < 0;
+        });
+  }
 
   s->index = s->index_vec.empty() ? NULL : s->index_vec.data();
   return FL_OK;
