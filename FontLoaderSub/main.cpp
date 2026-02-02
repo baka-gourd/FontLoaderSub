@@ -315,7 +315,10 @@ static int AppBuildLog(FL_AppCtx *c) {
 
 static int AppUpdateStatus(FL_AppCtx *c) {
   FS_Stat stat = {0};
-  if (c->loader.font_set) {
+  if (c->app_state == APP_SCAN_FONT) {
+    stat.num_file = c->loader.num_scan_file.load(std::memory_order_relaxed);
+    stat.num_face = c->loader.num_scan_face.load(std::memory_order_relaxed);
+  } else if (c->loader.font_set && c->app_state != APP_LOAD_CACHE) {
     fs_stat(c->loader.font_set, &stat);
   }
 

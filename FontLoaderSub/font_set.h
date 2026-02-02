@@ -49,6 +49,8 @@ FS_FontParseResult *fs_parse_font_data(const uint8_t *buf, size_t size);
 
 void fs_parse_font_free(FS_FontParseResult *result);
 
+uint32_t fs_parse_result_face_count(const FS_FontParseResult *result);
+
 int fs_add_parsed_font(
     FS_Set *s,
     const char *tag,

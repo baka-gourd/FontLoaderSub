@@ -38,6 +38,8 @@ typedef struct {
   std::atomic<uint32_t> num_font_loaded;
   std::atomic<uint32_t> num_font_failed;
   std::atomic<uint32_t> num_font_unmatched;
+  std::atomic<uint32_t> num_scan_file;
+  std::atomic<uint32_t> num_scan_face;
 
   void *event_cancel;
   void *hash_alg;

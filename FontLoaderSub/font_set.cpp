@@ -283,6 +283,13 @@ void fs_parse_font_free(FS_FontParseResult *result) {
   delete result;
 }
 
+uint32_t fs_parse_result_face_count(const FS_FontParseResult *result) {
+  if (!result) {
+    return 0;
+  }
+  return result->count_face;
+}
+
 int fs_add_parsed_font(
     FS_Set *s,
     const char *tag,

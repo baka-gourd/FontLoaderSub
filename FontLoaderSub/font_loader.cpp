@@ -62,6 +62,8 @@ int fl_init(FL_LoaderCtx *c, allocator_t *alloc) {
   c->num_font_loaded.store(0, std::memory_order_relaxed);
   c->num_font_failed.store(0, std::memory_order_relaxed);
   c->num_font_unmatched.store(0, std::memory_order_relaxed);
+  c->num_scan_file.store(0, std::memory_order_relaxed);
+  c->num_scan_face.store(0, std::memory_order_relaxed);
   c->loaded_font.clear();
   c->event_cancel = NULL;
   c->hash_alg = NULL;
@@ -352,6 +354,7 @@ fl_walk_font_enqueue(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   item.path = path;
   item.tag = std::move(tag_u8);
   ctx->queue->enqueue(std::move(item));
+  ctx->loader->num_scan_file.fetch_add(1, std::memory_order_relaxed);
   return FL_OK;
 }
 
@@ -364,7 +367,11 @@ static int fl_scan_fonts_mt(FL_LoaderCtx *c) {
   std::atomic<int> error(FL_OK);
 
   const unsigned int hw = std::thread::hardware_concurrency();
-  const unsigned int worker_count = (hw == 0) ? 2u : (hw > 4 ? 4u : hw);
+  unsigned int worker_count = (hw == 0) ? 4u : hw;
+  if (worker_count < 2u)
+    worker_count = 2u;
+  if (worker_count > 12u)
+    worker_count = 12u;
   SPDLOG_INFO("fl_scan_fonts_mt workers={}", worker_count);
 
   std::vector<std::thread> workers;
@@ -394,6 +401,11 @@ static int fl_scan_fonts_mt(FL_LoaderCtx *c) {
         FS_FontParseResult *parsed =
             fs_parse_font_data((const uint8_t *)map.data, map.size);
         FlMemUnmap(&map);
+
+        if (parsed) {
+          const uint32_t faces = fs_parse_result_face_count(parsed);
+          c->num_scan_face.fetch_add(faces, std::memory_order_relaxed);
+        }
 
         FL_FontScanResult res;
         res.tag = std::move(item.tag);
@@ -504,6 +516,9 @@ int fl_scan_fonts(
   } else {
     SPDLOG_INFO("fl_scan_fonts start (utf16)");
   }
+
+  c->num_scan_file.store(0, std::memory_order_relaxed);
+  c->num_scan_face.store(0, std::memory_order_relaxed);
 
   int r = FlResolvePath(path, &c->font_path);
   // if path points to a file, find its parent directory
