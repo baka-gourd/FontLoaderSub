@@ -14,6 +14,7 @@
 #include "ass_string.h"
 #include "ass_parser.h"
 #include "path.h"
+#include "log.h"
 #include "mock_config.h"
 #include "util.h"
 #include "utf.h"
@@ -22,6 +23,30 @@
 #include <concurrentqueue.h>
 
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+
+static std::string fl_utf16_to_utf8_safe(const wchar_t *path) {
+  if (path == NULL)
+    return std::string();
+  std::string out;
+  if (!Utf16ToUtf8(path, &out))
+    return std::string();
+  return out;
+}
+
+static std::string fl_font_key(const char *font, size_t cch) {
+  if (font == NULL || cch == 0)
+    return std::string();
+  std::wstring wide;
+  if (!Utf8ToUtf16(font, cch, &wide))
+    return std::string();
+  if (!wide.empty()) {
+    CharLowerBuffW(&wide[0], (DWORD)wide.size());
+  }
+  std::string out;
+  if (!Utf16ToUtf8(wide, &out))
+    return std::string();
+  return out;
+}
 
 int fl_init(FL_LoaderCtx *c, allocator_t *alloc) {
   int r = FL_OK;
@@ -55,8 +80,12 @@ int fl_init(FL_LoaderCtx *c, allocator_t *alloc) {
     }
   } while (0);
 
-  if (r != FL_OK)
+  if (r != FL_OK) {
+    SPDLOG_ERROR("fl_init failed, err={}", r);
     fl_free(c);
+  } else {
+    SPDLOG_INFO("fl_init ok");
+  }
   return r;
 }
 
@@ -78,6 +107,7 @@ int fl_free(FL_LoaderCtx *c) {
   fs_free(c->font_set);
   c->font_set = NULL;
 
+  SPDLOG_INFO("fl_free done");
   return FL_OK;
 }
 
@@ -127,7 +157,10 @@ static int fl_sub_font_callback(const char *font, size_t cch, void *arg) {
       return FL_OK;
 
     std::string name(font, cch);
-    if (c->sub_font_set.insert(name).second) {
+    std::string key = fl_font_key(font, cch);
+    if (key.empty())
+      key = name;
+    if (c->sub_font_set.insert(key).second) {
       c->sub_fonts.push_back(std::move(name));
       c->num_sub_font.fetch_add(1, std::memory_order_relaxed);
     }
@@ -162,12 +195,24 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   if (!(match_attr && match_size && match_ext))
     return FL_OK;
 
+  const std::string path_u8 = fl_utf16_to_utf8_safe(path);
+  if (!path_u8.empty()) {
+    SPDLOG_INFO("ASS file detected: {}", path_u8);
+  } else {
+    SPDLOG_INFO("ASS file detected (utf16)");
+  }
+
   memmap_t map;
   char *content = NULL;
   size_t content_len = 0;
 
   FlMemMap(path, &map);
   if (!map.data) {
+    if (!path_u8.empty()) {
+      SPDLOG_WARN("ASS file map failed: {}", path_u8);
+    } else {
+      SPDLOG_WARN("ASS file map failed (utf16)");
+    }
     // ignore error
     return FL_OK;
   }
@@ -177,17 +222,40 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   if (content == NULL) {
     // ignore error
     FlMemUnmap(&map);
+    if (!path_u8.empty()) {
+      SPDLOG_WARN("ASS file decode failed: {}", path_u8);
+    } else {
+      SPDLOG_WARN("ASS file decode failed (utf16)");
+    }
     return FL_OK;
   }
 
-  if (!fl_add_sub_file_loaded(c, path)) {
-    FlMemUnmap(&map);
-    c->alloc->alloc(content, 0, c->alloc->arg);
-    return FL_OUT_OF_MEMORY;
+  const int added = fl_add_sub_file_loaded(c, path);
+  if (!added) {
+    if (!path_u8.empty()) {
+      SPDLOG_WARN(
+          "ASS file dedup tracking skipped (utf8 conversion failed): {}",
+          path_u8);
+    } else {
+      SPDLOG_WARN("ASS file dedup tracking skipped (utf16 conversion failed)");
+    }
   }
 
+  const size_t before_fonts = c->sub_font_set.size();
   c->num_sub.fetch_add(1, std::memory_order_relaxed);
   ass_process_data(content, content_len, fl_sub_font_callback, c);
+  const size_t after_fonts = c->sub_font_set.size();
+  const size_t new_fonts =
+      (after_fonts >= before_fonts) ? (after_fonts - before_fonts) : 0;
+  if (!path_u8.empty()) {
+    SPDLOG_INFO(
+        "ASS parsed: {} new_fonts={} total_fonts={}", path_u8, new_fonts,
+        after_fonts);
+  } else {
+    SPDLOG_INFO(
+        "ASS parsed (utf16) new_fonts={} total_fonts={}", new_fonts,
+        after_fonts);
+  }
   if (MOCK_DELAY_SUB)
     Sleep(MOCK_DELAY_SUB);
 
@@ -198,6 +266,12 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
 
 int fl_add_subs(FL_LoaderCtx *c, const wchar_t *path) {
   int r;
+  const std::string path_u8 = fl_utf16_to_utf8_safe(path);
+  if (!path_u8.empty()) {
+    SPDLOG_INFO("fl_add_subs start: {}", path_u8);
+  } else {
+    SPDLOG_INFO("fl_add_subs start (utf16)");
+  }
   do {
     c->walk_path.clear();
     r = FlResolvePath(path, &c->walk_path);
@@ -213,6 +287,17 @@ int fl_add_subs(FL_LoaderCtx *c, const wchar_t *path) {
     if (r != FL_OK)
       break;
   } while (0);
+  if (!path_u8.empty()) {
+    SPDLOG_INFO(
+        "fl_add_subs done: {} result={} sub_count={} font_count={}", path_u8, r,
+        c->num_sub.load(std::memory_order_relaxed),
+        c->num_sub_font.load(std::memory_order_relaxed));
+  } else {
+    SPDLOG_INFO(
+        "fl_add_subs done (utf16) result={} sub_count={} font_count={}", r,
+        c->num_sub.load(std::memory_order_relaxed),
+        c->num_sub_font.load(std::memory_order_relaxed));
+  }
   return r;
 }
 
@@ -271,6 +356,7 @@ fl_walk_font_enqueue(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
 }
 
 static int fl_scan_fonts_mt(FL_LoaderCtx *c) {
+  SPDLOG_INFO("fl_scan_fonts_mt start");
   moodycamel::ConcurrentQueue<FL_FontScanItem> work_queue;
   moodycamel::ConcurrentQueue<FL_FontScanResult> result_queue;
   std::atomic<bool> cancel(false);
@@ -279,6 +365,7 @@ static int fl_scan_fonts_mt(FL_LoaderCtx *c) {
 
   const unsigned int hw = std::thread::hardware_concurrency();
   const unsigned int worker_count = (hw == 0) ? 2u : (hw > 4 ? 4u : hw);
+  SPDLOG_INFO("fl_scan_fonts_mt workers={}", worker_count);
 
   std::vector<std::thread> workers;
   workers.reserve(worker_count);
@@ -342,6 +429,8 @@ static int fl_scan_fonts_mt(FL_LoaderCtx *c) {
   }
 
   const int scan_err = error.load();
+  SPDLOG_INFO(
+      "fl_scan_fonts_mt done result={}", scan_err == FL_OK ? r : scan_err);
   return scan_err == FL_OK ? r : scan_err;
 }
 
@@ -404,6 +493,18 @@ int fl_scan_fonts(
   fs_free(c->font_set);
   c->font_set = NULL;
 
+  const std::string path_u8 = fl_utf16_to_utf8_safe(path);
+  const std::string cache_u8 = fl_utf16_to_utf8_safe(cache);
+  const std::string black_u8 = fl_utf16_to_utf8_safe(black);
+  if (!path_u8.empty()) {
+    SPDLOG_INFO(
+        "fl_scan_fonts start: path={} cache={} black={}", path_u8,
+        cache_u8.empty() ? "<none>" : cache_u8,
+        black_u8.empty() ? "<none>" : black_u8);
+  } else {
+    SPDLOG_INFO("fl_scan_fonts start (utf16)");
+  }
+
   int r = FlResolvePath(path, &c->font_path);
   // if path points to a file, find its parent directory
   if (1) {
@@ -451,6 +552,16 @@ int fl_scan_fonts(
     c->font_set = NULL;
   }
 
+  if (r == FL_OK && c->font_set) {
+    FS_Stat stat = {0};
+    fs_stat(c->font_set, &stat);
+    SPDLOG_INFO(
+        "fl_scan_fonts done: files={} faces={} r={}", stat.num_file,
+        stat.num_face, r);
+  } else {
+    SPDLOG_WARN("fl_scan_fonts failed: r={}", r);
+  }
+
   return r;
 }
 
@@ -462,6 +573,16 @@ int fl_save_cache(FL_LoaderCtx *c, const wchar_t *cache) {
   c->walk_path += cache;
 
   r = fs_cache_dump(c->font_set, c->walk_path.c_str());
+  if (r == FL_OK) {
+    const std::string cache_u8 = fl_utf16_to_utf8_safe(c->walk_path.c_str());
+    if (!cache_u8.empty()) {
+      SPDLOG_INFO("Cache saved: {}", cache_u8);
+    } else {
+      SPDLOG_INFO("Cache saved (utf16)");
+    }
+  } else {
+    SPDLOG_WARN("Cache save failed: r={}", r);
+  }
   return r;
 }
 
@@ -494,11 +615,13 @@ static int IsFontInstalled(const char *face) {
   return found;
 }
 
+static int fl_utf8_casecmp(const char *a, const char *b);
+
 static int fl_face_loaded(FL_LoaderCtx *c, const char *face) {
   if (face == NULL)
     return 0;
   for (const auto &m : c->loaded_font) {
-    if (m.face == face)
+    if (fl_utf8_casecmp(m.face.c_str(), face) == 0)
       return 1;
   }
   return 0;
@@ -693,6 +816,15 @@ fl_load_file(FL_LoaderCtx *c, const char *face, const char *file, int *dup) {
       r = FL_OUT_OF_MEMORY;
     }
   }
+  if (r == FL_OS_ERROR) {
+    SPDLOG_WARN(
+        "Font load failed: face={} file={}", face ? face : "<null>",
+        file ? file : "<null>");
+  } else if (r == FL_DUP) {
+    SPDLOG_INFO(
+        "Font load duplicate: face={} file={}", face ? face : "<null>",
+        file ? file : "<null>");
+  }
   return r;
 }
 
@@ -733,6 +865,8 @@ int fl_load_fonts(FL_LoaderCtx *c) {
   c->num_font_loaded.store(0, std::memory_order_relaxed);
   c->num_font_unmatched.store(0, std::memory_order_relaxed);
 
+  SPDLOG_INFO("fl_load_fonts start: sub_fonts={}", c->sub_fonts.size());
+
   // pass 1: scan for existing fonts
   for (const auto &face : c->sub_fonts) {
     if ((r = fl_check_cancel(c)) != FL_OK)
@@ -764,6 +898,7 @@ int fl_load_fonts(FL_LoaderCtx *c) {
       if (!fl_try_push_loaded(c, m))
         return FL_OUT_OF_MEMORY;
       c->num_font_unmatched.fetch_add(1, std::memory_order_relaxed);
+      SPDLOG_INFO("Font missing: {}", face);
     } else {
       int num_loaded = 0;
       int num_dup = 0;
@@ -780,6 +915,9 @@ int fl_load_fonts(FL_LoaderCtx *c) {
         if (r == FL_OK)
           num_loaded++;
       } while (r != FL_OUT_OF_MEMORY && num_loaded <= 16 && fs_iter_next(&it));
+      SPDLOG_INFO(
+          "Font load summary: face={} loaded={} dup={} total={}", face,
+          num_loaded, num_dup, num_total);
       if (num_dup == num_total && dup_candidate >= 0 &&
           dup_candidate < (int)c->loaded_font.size()) {
         FL_FontMatch m;
@@ -801,6 +939,12 @@ int fl_load_fonts(FL_LoaderCtx *c) {
         });
   }
 
+  SPDLOG_INFO(
+      "fl_load_fonts done: loaded={} failed={} unmatched={} total_records={}",
+      c->num_font_loaded.load(std::memory_order_relaxed),
+      c->num_font_failed.load(std::memory_order_relaxed),
+      c->num_font_unmatched.load(std::memory_order_relaxed),
+      c->loaded_font.size());
   return FL_OK;
 }
 
@@ -810,6 +954,9 @@ int fl_load_fonts_incremental(FL_LoaderCtx *c) {
 
   int r = FL_OK;
   // NOTE: Don't reset counters here, unlike fl_load_fonts
+
+  SPDLOG_INFO(
+      "fl_load_fonts_incremental start: sub_fonts={}", c->sub_fonts.size());
 
   // pass 1: scan for existing fonts (skip already loaded ones)
   for (const auto &face : c->sub_fonts) {
@@ -845,6 +992,7 @@ int fl_load_fonts_incremental(FL_LoaderCtx *c) {
       if (!fl_try_push_loaded(c, m))
         return FL_OUT_OF_MEMORY;
       c->num_font_unmatched.fetch_add(1, std::memory_order_relaxed);
+      SPDLOG_INFO("Font missing: {}", face);
     } else {
       int num_loaded = 0;
       int num_dup = 0;
@@ -861,6 +1009,9 @@ int fl_load_fonts_incremental(FL_LoaderCtx *c) {
         if (r == FL_OK)
           num_loaded++;
       } while (r != FL_OUT_OF_MEMORY && num_loaded <= 16 && fs_iter_next(&it));
+      SPDLOG_INFO(
+          "Font load summary: face={} loaded={} dup={} total={}", face,
+          num_loaded, num_dup, num_total);
       if (num_dup == num_total && dup_candidate >= 0 &&
           dup_candidate < (int)c->loaded_font.size()) {
         FL_FontMatch m;
@@ -882,6 +1033,13 @@ int fl_load_fonts_incremental(FL_LoaderCtx *c) {
         });
   }
 
+  SPDLOG_INFO(
+      "fl_load_fonts_incremental done: loaded={} failed={} unmatched={} "
+      "total_records={}",
+      c->num_font_loaded.load(std::memory_order_relaxed),
+      c->num_font_failed.load(std::memory_order_relaxed),
+      c->num_font_unmatched.load(std::memory_order_relaxed),
+      c->loaded_font.size());
   return FL_OK;
 }
 
@@ -928,12 +1086,14 @@ fl_unload_cb(FL_LoaderCtx *c, size_t i, const wchar_t *path, void *param) {
 }
 
 int fl_unload_fonts(FL_LoaderCtx *c) {
+  SPDLOG_INFO("fl_unload_fonts start: total_records={}", c->loaded_font.size());
   fl_walk_loaded_fonts(c, fl_unload_cb, NULL);
   c->loaded_font.clear();
   c->num_font_loaded.store(0, std::memory_order_relaxed);
   c->num_font_failed.store(0, std::memory_order_relaxed);
   c->num_font_unmatched.store(0, std::memory_order_relaxed);
 
+  SPDLOG_INFO("fl_unload_fonts done");
   return FL_OK;
 }
 
@@ -972,6 +1132,8 @@ fl_cache_cb(FL_LoaderCtx *c, size_t i, const wchar_t *path, void *param) {
 }
 
 int fl_cache_fonts(FL_LoaderCtx *c, HANDLE evt_cancel) {
+  SPDLOG_INFO("fl_cache_fonts start");
   fl_walk_loaded_fonts(c, fl_cache_cb, &evt_cancel);
+  SPDLOG_INFO("fl_cache_fonts done");
   return FL_OK;
 }

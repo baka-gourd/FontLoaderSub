@@ -1,6 +1,11 @@
 #include "path.h"
+#include "path.h"
 
+#include <filesystem>
+#include <system_error>
 #include <string>
+
+namespace fs = std::filesystem;
 
 int FlResolvePath(const wchar_t *path, std::wstring *out) {
   if (out == NULL)
@@ -54,57 +59,53 @@ size_t FlPathParent(std::wstring *path) {
   return pos;
 }
 
-static int
-WalkDirDfs(const std::wstring &dir, FL_FileWalkCb callback, void *arg) {
-  std::wstring search = dir;
-  if (!search.empty() && search.back() != L'\\')
-    search += L'\\';
-  search += L"*";
-
-  WIN32_FIND_DATA fd;
-  HANDLE find_handle = FindFirstFile(search.c_str(), &fd);
-  if (find_handle == INVALID_HANDLE_VALUE) {
-    return FL_OK;
-  }
-
-  int r = FL_OK;
-  do {
-    if ((fd.cFileName[0] == L'.' && fd.cFileName[1] == 0) ||
-        (fd.cFileName[0] == L'.' && fd.cFileName[1] == L'.' &&
-         fd.cFileName[2] == 0)) {
-      continue;
-    }
-
-    std::wstring full = dir;
-    if (!full.empty() && full.back() != L'\\')
-      full += L'\\';
-    full += fd.cFileName;
-
-    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-      r = WalkDirDfs(full, callback, arg);
-    } else {
-      r = callback(full.c_str(), &fd, arg);
-    }
-  } while (r == FL_OK && FindNextFile(find_handle, &fd));
-
-  FindClose(find_handle);
-  return r;
-}
-
 int FlWalkDir(const wchar_t *path, FL_FileWalkCb callback, void *arg) {
   if (path == NULL || callback == NULL)
     return FL_OS_ERROR;
-  const DWORD attr = GetFileAttributes(path);
-  if (attr == INVALID_FILE_ATTRIBUTES)
+  std::error_code ec;
+  const fs::path in_path(path);
+  if (!fs::exists(in_path, ec))
     return FL_OK;
-  if (!(attr & FILE_ATTRIBUTE_DIRECTORY)) {
-    WIN32_FIND_DATA fd;
-    HANDLE find_handle = FindFirstFile(path, &fd);
-    if (find_handle == INVALID_HANDLE_VALUE)
-      return FL_OK;
-    const int r = callback(path, &fd, arg);
-    FindClose(find_handle);
-    return r;
+
+  WIN32_FIND_DATAW fd = {};
+  WIN32_FILE_ATTRIBUTE_DATA fad = {};
+
+  if (fs::is_regular_file(in_path, ec)) {
+    if (GetFileAttributesExW(in_path.c_str(), GetFileExInfoStandard, &fad)) {
+      fd.dwFileAttributes = fad.dwFileAttributes;
+      fd.nFileSizeHigh = fad.nFileSizeHigh;
+      fd.nFileSizeLow = fad.nFileSizeLow;
+      return callback(in_path.c_str(), &fd, arg);
+    }
+    return FL_OK;
   }
-  return WalkDirDfs(path, callback, arg);
+
+  if (!fs::is_directory(in_path, ec))
+    return FL_OK;
+
+  const auto options = fs::directory_options::skip_permission_denied;
+  fs::recursive_directory_iterator it(in_path, options, ec);
+  fs::recursive_directory_iterator end;
+  for (; it != end; it.increment(ec)) {
+    if (ec) {
+      ec.clear();
+      continue;
+    }
+    const fs::path entry_path = it->path();
+    if (it->is_directory(ec))
+      continue;
+    if (ec) {
+      ec.clear();
+      continue;
+    }
+    if (GetFileAttributesExW(entry_path.c_str(), GetFileExInfoStandard, &fad)) {
+      fd.dwFileAttributes = fad.dwFileAttributes;
+      fd.nFileSizeHigh = fad.nFileSizeHigh;
+      fd.nFileSizeLow = fad.nFileSizeLow;
+      const int r = callback(entry_path.c_str(), &fd, arg);
+      if (r != FL_OK)
+        return r;
+    }
+  }
+  return FL_OK;
 }

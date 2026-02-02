@@ -5,6 +5,7 @@
 
 #include <Shobjidl.h>
 
+#include "log.h"
 #include "utf.h"
 
 #define C_SAVE_RELEASE(obj)          \
@@ -180,6 +181,7 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
   IFileOperation *file_opt = NULL;
 
   do {
+    SPDLOG_INFO("ExportLoadedFonts start");
     // prepare "Select folder" dialog
     hr = CoCreateInstance(
         CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog,
@@ -195,6 +197,7 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
     hr = pfd->lpVtbl->Show(pfd, hWnd);
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
       // cancelled
+      SPDLOG_INFO("ExportLoadedFonts cancelled by user");
       succ = 1;
       break;
     } else if (FAILED(hr))
@@ -206,6 +209,12 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
     hr = dest->lpVtbl->GetDisplayName(dest, dn, &path_name);
     if (FAILED(hr))
       break;
+    if (path_name) {
+      std::string path_u8;
+      if (Utf16ToUtf8(path_name, &path_u8)) {
+        SPDLOG_INFO("Export target: {}", path_u8);
+      }
+    }
 
     // prepare font list and copy
     hr = LFEC_Create(c, &font_enum);
@@ -227,6 +236,7 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
       break;
 
     ShellExecute(NULL, NULL, path_name, NULL, NULL, SW_SHOW);
+    SPDLOG_INFO("ExportLoadedFonts done");
     succ = 1;
   } while (0);
 
@@ -236,6 +246,7 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
   C_SAVE_RELEASE(file_opt);
   CoTaskMemFree(path_name);
   if (!succ) {
+    SPDLOG_ERROR("ExportLoadedFonts failed");
     TaskDialog(
         NULL, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...", NULL,
         TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, NULL);

@@ -66,4 +66,5 @@ typedef struct {
   ITaskbarList3 *taskbar_list3;
   std::unordered_set<std::wstring> loaded_subs;  // list of processed files
   int incremental_load;  // flag for incremental font loading
+  LONG drop_guard;
 } FL_AppCtx;

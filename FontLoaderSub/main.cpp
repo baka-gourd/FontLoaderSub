@@ -6,6 +6,7 @@
 
 #include "ass_string.h"
 #include "exporter.h"
+#include "log.h"
 #include "util.h"
 #include "path.h"
 #include "shortcut.h"
@@ -74,6 +75,10 @@ MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
   case WM_DROPFILES:
     if (c && c->app_state == APP_DONE) {
       HDROP hDrop = (HDROP)wParam;
+      if (InterlockedExchange(&c->drop_guard, 1) != 0) {
+        DragFinish(hDrop);
+        return 0;
+      }
       UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, NULL, 0);
       int has_new_files = 0;
 
@@ -90,7 +95,30 @@ MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
             int r = fl_add_subs(&c->loader, fileName.c_str());
             if (r == FL_OK) {
               AddSubtitleFileToLoaded(c, fileName.c_str());
+              std::string file_u8;
+              if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
+                SPDLOG_INFO("New subtitle loaded from drag-drop: {}", file_u8);
+              } else {
+                SPDLOG_INFO("New subtitle loaded from drag-drop (utf16)");
+              }
               has_new_files = 1;
+            } else {
+              std::string file_u8;
+              if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
+                SPDLOG_INFO(
+                    "Failed to add subtitle from drag-drop: {} (err={})",
+                    file_u8, r);
+              } else {
+                SPDLOG_INFO(
+                    "Failed to add subtitle from drag-drop (err={})", r);
+              }
+            }
+          } else {
+            std::string file_u8;
+            if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
+              SPDLOG_INFO("Skip already loaded subtitle: {}", file_u8);
+            } else {
+              SPDLOG_INFO("Skip already loaded subtitle (utf16)");
             }
           }
         }
@@ -111,6 +139,7 @@ MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
           SendMessage(c->work_hwnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
         }
       }
+      InterlockedExchange(&c->drop_guard, 0);
     }
     return 0;
   case WM_CLOSE:
@@ -138,6 +167,10 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
   case WM_DROPFILES:
     if (c && c->app_state == APP_DONE) {
       HDROP hDrop = (HDROP)wParam;
+      if (InterlockedExchange(&c->drop_guard, 1) != 0) {
+        DragFinish(hDrop);
+        return 0;
+      }
       UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, NULL, 0);
       int has_new_files = 0;
 
@@ -154,7 +187,31 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
             int r = fl_add_subs(&c->loader, fileName.c_str());
             if (r == FL_OK) {
               AddSubtitleFileToLoaded(c, fileName.c_str());
+              std::string file_u8;
+              if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
+                SPDLOG_INFO(
+                    "New subtitle loaded from done dialog: {}", file_u8);
+              } else {
+                SPDLOG_INFO("New subtitle loaded from done dialog (utf16)");
+              }
               has_new_files = 1;
+            } else {
+              std::string file_u8;
+              if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
+                SPDLOG_INFO(
+                    "Failed to add subtitle from done dialog: {} (err={})",
+                    file_u8, r);
+              } else {
+                SPDLOG_INFO(
+                    "Failed to add subtitle from done dialog (err={})", r);
+              }
+            }
+          } else {
+            std::string file_u8;
+            if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
+              SPDLOG_INFO("Skip already loaded subtitle: {}", file_u8);
+            } else {
+              SPDLOG_INFO("Skip already loaded subtitle (utf16)");
             }
           }
         }
@@ -178,6 +235,7 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
           SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
         }
       }
+      InterlockedExchange(&c->drop_guard, 0);
     }
     return 0;
   default:
@@ -295,9 +353,11 @@ static int AppUpdateStatus(FL_AppCtx *c) {
 static DWORD WINAPI AppWorker(LPVOID param) {
   FL_AppCtx *c = (FL_AppCtx *)param;
   int r = FL_OK;
+  SPDLOG_INFO("AppWorker start");
   while (r == FL_OK && !c->cancelled && c->app_state != APP_DONE) {
     switch (c->app_state) {
     case APP_LOAD_SUB: {
+      SPDLOG_INFO("State: APP_LOAD_SUB");
       if (MOCK_SUB_PATH) {
         r = fl_add_subs(&c->loader, MOCK_SUB_PATH);
         if (r == FL_OK) {
@@ -310,10 +370,12 @@ static DWORD WINAPI AppWorker(LPVOID param) {
           AddSubtitleFileToLoaded(c, c->argv[i]);
         }
       }
+      SPDLOG_INFO("APP_LOAD_SUB done, r={}", r);
       c->app_state = APP_LOAD_CACHE;
       break;
     }
     case APP_LOAD_CACHE: {
+      SPDLOG_INFO("State: APP_LOAD_CACHE");
       fl_scan_fonts(&c->loader, c->font_path.c_str(), kCacheFile, kBlackFile);
       FS_Stat stat = {0};
       fs_stat(c->loader.font_set, &stat);
@@ -322,17 +384,21 @@ static DWORD WINAPI AppWorker(LPVOID param) {
       } else {
         c->app_state = APP_LOAD_FONT;
       }
+      SPDLOG_INFO("APP_LOAD_CACHE done, faces={}", stat.num_face);
       break;
     }
     case APP_SCAN_FONT: {
+      SPDLOG_INFO("State: APP_SCAN_FONT");
       if (fl_scan_fonts(&c->loader, c->font_path.c_str(), NULL, kBlackFile) ==
           FL_OK) {
         fl_save_cache(&c->loader, kCacheFile);
       }
       c->app_state = APP_LOAD_FONT;
+      SPDLOG_INFO("APP_SCAN_FONT done");
       break;
     }
     case APP_LOAD_FONT: {
+      SPDLOG_INFO("State: APP_LOAD_FONT incremental={}", c->incremental_load);
       if (c->incremental_load) {
         r = fl_load_fonts_incremental(&c->loader);
         c->incremental_load = 0;  // Reset flag
@@ -341,15 +407,18 @@ static DWORD WINAPI AppWorker(LPVOID param) {
       }
       if (r == FL_OK)
         c->app_state = APP_DONE;
+      SPDLOG_INFO("APP_LOAD_FONT done, r={}", r);
       break;
     }
     case APP_UNLOAD_FONT: {
+      SPDLOG_INFO("State: APP_UNLOAD_FONT");
       fl_unload_fonts(&c->loader);
       if (c->req_exit) {
         c->cancelled = 1;
       } else {
         c->app_state = APP_SCAN_FONT;
       }
+      SPDLOG_INFO("APP_UNLOAD_FONT done");
       break;
     }
     default: {
@@ -360,8 +429,10 @@ static DWORD WINAPI AppWorker(LPVOID param) {
   if (c->cancelled) {
     fl_unload_fonts(&c->loader);
     c->app_state = APP_CANCELLED;
+    SPDLOG_INFO("AppWorker cancelled");
   }
 
+  SPDLOG_INFO("AppWorker exit r={}", r);
   return 0;
 }
 
@@ -648,6 +719,7 @@ static const TASKDIALOGCONFIG kDlgDoneTemplate = MakeDlgDoneTemplate();
 static const TASKDIALOGCONFIG kDlgHelpTemplate = MakeDlgHelpTemplate();
 
 static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
+  SPDLOG_INFO("AppInit start");
   c->hInst = hInst;
   c->alloc = alloc;
 
@@ -664,18 +736,24 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->dlg_help.lpCallbackData = (LONG_PTR)c;
 
   c->btn_menu = LoadMenu(hInst, MAKEINTRESOURCE(IDR_BTN_MENU));
-  if (c->btn_menu == NULL)
+  if (c->btn_menu == NULL) {
+    SPDLOG_ERROR("LoadMenu failed");
     return 0;
+  }
 
   c->argv = CommandLineToArgvW(GetCommandLine(), &c->argc);
-  if (c->argv == NULL)
+  if (c->argv == NULL) {
+    SPDLOG_ERROR("CommandLineToArgvW failed");
     return 0;
+  }
   DWORD initial = MAX_PATH;
   while (1) {
     c->full_exe_path.resize(initial);
     DWORD ret = GetModuleFileName(NULL, &c->full_exe_path[0], initial);
-    if (ret == 0)
+    if (ret == 0) {
+      SPDLOG_ERROR("GetModuleFileName failed");
       return 0;
+    }
     if (ret < initial - 1) {
       c->full_exe_path.resize(ret);
       break;
@@ -690,8 +768,11 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->shortcut.path = c->full_exe_path.c_str();
   c->app_state = APP_LOAD_SUB;
   c->incremental_load = 0;  // Initialize flag
-  if (fl_init(&c->loader, c->alloc) != FL_OK)
+  c->drop_guard = 0;
+  if (fl_init(&c->loader, c->alloc) != FL_OK) {
+    SPDLOG_ERROR("fl_init failed");
     return 0;
+  }
   c->log.clear();
   c->loaded_subs.clear();
   c->font_path = c->full_exe_path;
@@ -700,11 +781,15 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
     c->font_path.assign(MOCK_FONT_PATH);
 
   c->evt_stop_cache = CreateEvent(NULL, TRUE, FALSE, NULL);
-  if (c->evt_stop_cache == NULL)
+  if (c->evt_stop_cache == NULL) {
+    SPDLOG_ERROR("CreateEvent for cache failed");
     return 0;
+  }
 
-  if (!AppCreateMessageWindow(c))
+  if (!AppCreateMessageWindow(c)) {
+    SPDLOG_ERROR("AppCreateMessageWindow failed");
     return 0;
+  }
 
   if (SUCCEEDED(CoCreateInstance(
           CLSID_TaskbarList, NULL, CLSCTX_INPROC_SERVER, IID_ITaskbarList3,
@@ -715,10 +800,12 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
     }
   }
 
+  SPDLOG_INFO("AppInit done");
   return 1;
 }
 
 static int AppRun(FL_AppCtx *c) {
+  SPDLOG_INFO("AppRun start");
   if (0 && GetAsyncKeyState(VK_SHIFT)) {
     ShortcutShow(&c->shortcut, NULL);
     return 0;
@@ -745,6 +832,7 @@ static int AppRun(FL_AppCtx *c) {
     DispatchMessage(&msg);
   }
 
+  SPDLOG_INFO("AppRun done");
   return 0;
 }
 
@@ -766,12 +854,25 @@ int WINAPI _tWinMain(
   allocator_t alloc = {};
   alloc.alloc = mem_realloc;
   alloc.arg = heap;
+  fl_log::Init();
+  SPDLOG_INFO("FontLoaderSub start, pid={}", GetCurrentProcessId());
   FL_AppCtx *ctx = &g_app;
   if (ctx == NULL || !AppInit(ctx, hInstance, &alloc)) {
     TaskDialog(
         NULL, hInstance, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...", NULL,
         TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, NULL);
+    SPDLOG_ERROR("AppInit failed");
+    fl_log::Shutdown();
     return 1;
+  }
+  if (ctx->argc > 0) {
+    SPDLOG_INFO("Command line argc={}", ctx->argc);
+    for (int i = 0; i < ctx->argc; i++) {
+      std::string arg_u8;
+      if (Utf16ToUtf8(ctx->argv[i], &arg_u8)) {
+        SPDLOG_INFO("argv[{}]={}", i, arg_u8);
+      }
+    }
   }
   AppRun(ctx);
 
@@ -780,6 +881,8 @@ int WINAPI _tWinMain(
     ctx->hwnd_message = NULL;
   }
 
+  SPDLOG_INFO("FontLoaderSub exit");
+  fl_log::Shutdown();
   return 0;
 }
 
