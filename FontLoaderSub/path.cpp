@@ -94,5 +94,17 @@ WalkDirDfs(const std::wstring &dir, FL_FileWalkCb callback, void *arg) {
 int FlWalkDir(const wchar_t *path, FL_FileWalkCb callback, void *arg) {
   if (path == NULL || callback == NULL)
     return FL_OS_ERROR;
+  const DWORD attr = GetFileAttributes(path);
+  if (attr == INVALID_FILE_ATTRIBUTES)
+    return FL_OK;
+  if (!(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+    WIN32_FIND_DATA fd;
+    HANDLE find_handle = FindFirstFile(path, &fd);
+    if (find_handle == INVALID_HANDLE_VALUE)
+      return FL_OK;
+    const int r = callback(path, &fd, arg);
+    FindClose(find_handle);
+    return r;
+  }
   return WalkDirDfs(path, callback, arg);
 }
