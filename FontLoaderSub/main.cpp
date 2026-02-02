@@ -79,6 +79,13 @@ MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         DragFinish(hDrop);
         return 0;
       }
+      DWORD now_tick = GetTickCount();
+      if (now_tick - c->last_drop_tick < c->drop_debounce_ms) {
+        DragFinish(hDrop);
+        InterlockedExchange(&c->drop_guard, 0);
+        return 0;
+      }
+      c->last_drop_tick = now_tick;
       UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, NULL, 0);
       int has_new_files = 0;
 
@@ -127,6 +134,12 @@ MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 
       // Only reload if we have new files
       if (has_new_files) {
+        if (c->thread_load != NULL &&
+            WaitForSingleObject(c->thread_load, 0) == WAIT_TIMEOUT) {
+          SPDLOG_INFO("Drop ignored: worker already running");
+          InterlockedExchange(&c->drop_guard, 0);
+          return 0;
+        }
         // Load fonts for new subtitles only (don't unload existing fonts)
         c->app_state = APP_LOAD_FONT;
         c->incremental_load = 1;  // Use incremental loading
@@ -171,6 +184,13 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
         DragFinish(hDrop);
         return 0;
       }
+      DWORD now_tick = GetTickCount();
+      if (now_tick - c->last_drop_tick < c->drop_debounce_ms) {
+        DragFinish(hDrop);
+        InterlockedExchange(&c->drop_guard, 0);
+        return 0;
+      }
+      c->last_drop_tick = now_tick;
       UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, NULL, 0);
       int has_new_files = 0;
 
@@ -220,6 +240,12 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
 
       // Only reload if we have new files
       if (has_new_files) {
+        if (c->thread_load != NULL &&
+            WaitForSingleObject(c->thread_load, 0) == WAIT_TIMEOUT) {
+          SPDLOG_INFO("Drop ignored: worker already running");
+          InterlockedExchange(&c->drop_guard, 0);
+          return 0;
+        }
         // Load fonts for new subtitles only (don't unload existing fonts)
         c->app_state = APP_LOAD_FONT;
         c->incremental_load = 1;  // Use incremental loading
@@ -462,13 +488,22 @@ static HRESULT CALLBACK DlgWorkProc(
     c->work_hwnd = hWnd;
     SendMessage(hWnd, TDM_SET_PROGRESS_BAR_MARQUEE, TRUE, 0);
 
-    DWORD thread_id;
-    c->thread_load = CreateThread(NULL, 0, AppWorker, c, 0, &thread_id);
+    if (c->thread_load != NULL) {
+      DWORD r = WaitForSingleObject(c->thread_load, 0);
+      if (r != WAIT_TIMEOUT) {
+        CloseHandle(c->thread_load);
+        c->thread_load = NULL;
+      }
+    }
     if (c->thread_load == NULL) {
-      // fatal error, try exit early
-      c->cancelled = 1;
-      c->app_state = APP_CANCELLED;
-      PostMessage(hWnd, WM_CLOSE, 0, 0);
+      DWORD thread_id;
+      c->thread_load = CreateThread(NULL, 0, AppWorker, c, 0, &thread_id);
+      if (c->thread_load == NULL) {
+        // fatal error, try exit early
+        c->cancelled = 1;
+        c->app_state = APP_CANCELLED;
+        PostMessage(hWnd, WM_CLOSE, 0, 0);
+      }
     }
   } else if (uNotification == TDN_BUTTON_CLICKED) {
     if (wParam == IDCANCEL) {
@@ -772,6 +807,8 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->app_state = APP_LOAD_SUB;
   c->incremental_load = 0;  // Initialize flag
   c->drop_guard = 0;
+  c->last_drop_tick = 0;
+  c->drop_debounce_ms = 250;
   if (fl_init(&c->loader, c->alloc) != FL_OK) {
     SPDLOG_ERROR("fl_init failed");
     return 0;

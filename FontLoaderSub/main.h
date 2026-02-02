@@ -67,4 +67,6 @@ typedef struct {
   std::unordered_set<std::wstring> loaded_subs;  // list of processed files
   int incremental_load;  // flag for incremental font loading
   LONG drop_guard;
+  DWORD last_drop_tick;
+  DWORD drop_debounce_ms;
 } FL_AppCtx;
