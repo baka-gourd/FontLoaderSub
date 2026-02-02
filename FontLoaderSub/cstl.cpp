@@ -1,4 +1,7 @@
 #include "cstl.h"
+#include "cstl.h"
+
+#include <cstring>
 #include "ass_string.h"
 #include "util.h"
 
@@ -166,4 +169,96 @@ void str_db_loads(str_db_t *s, const wchar_t *str, size_t cch, wchar_t ex_pad) {
   s->vec.alloc = NULL;
   s->ex_pad = ex_pad;
   s->pad_len = ex_pad ? 2 : 1;
+}
+
+static size_t str8_len(const char *str) {
+  const char *p;
+  for (p = str; *p; p++) {
+    // nop
+  }
+  return (size_t)(p - str);
+}
+
+static size_t str8_nlen(const char *str, size_t n) {
+  for (size_t i = 0; i != n; i++) {
+    if (str[i] == 0)
+      return i;
+  }
+  return n;
+}
+
+int str8_db_init(
+    str8_db_t *s,
+    allocator_t *alloc,
+    char ex_pad,
+    uint16_t pad_len) {
+  const int r = vec_init(&s->vec, sizeof(char), alloc);
+  s->ex_pad = ex_pad;
+  s->pad_len = pad_len;
+  return r;
+}
+
+int str8_db_free(str8_db_t *s) {
+  return vec_free(&s->vec);
+}
+
+size_t str8_db_tell(str8_db_t *s) {
+  return s->vec.n;
+}
+
+size_t str8_db_seek(str8_db_t *s, size_t pos) {
+  if (pos <= s->vec.capacity)
+    s->vec.n = pos;
+  return s->vec.n;
+}
+
+const char *str8_db_next(str8_db_t *s, size_t *next_pos) {
+  if (*next_pos == s->vec.n)
+    return NULL;
+  const char *ret = str8_db_get(s, *next_pos);
+  if (ret != NULL) {
+    const size_t len = str8_len(ret);
+    *next_pos += len + s->pad_len;
+  }
+  return ret;
+}
+
+const char *str8_db_get(str8_db_t *s, size_t pos) {
+  if (pos > s->vec.n)
+    return NULL;
+  char *buf = (char *)s->vec.data;
+  return &buf[pos];
+}
+
+const char *str8_db_push(str8_db_t *s, const char *str, size_t cch) {
+  const size_t len = cch ? str8_nlen(str, cch) : str8_len(str);
+  const size_t len_all = len + s->pad_len;
+  if (vec_prealloc(&s->vec, len_all + 1) < len_all + 1)
+    return NULL;
+
+  char *ret = (char *)str8_db_get(s, str8_db_tell(s));
+  for (size_t i = 0; i != len; i++)
+    ret[i] = str[i];
+
+  for (uint16_t i = 0; i != s->pad_len; i++)
+    ret[len + i] = s->ex_pad;
+  ret[len] = 0;
+
+  s->vec.n += len_all;
+  if (s->vec.n >= s->vec.capacity) {
+    FlBreak();
+  }
+  return ret;
+}
+
+const char *str8_db_str(str8_db_t *s, size_t pos, const char *str) {
+  const size_t len = str8_len(str) + 1;
+  size_t it = pos;
+  const char *sub;
+  while ((sub = str8_db_next(s, &it)) != NULL) {
+    if (std::strncmp(sub, str, len) == 0) {
+      return sub;
+    }
+  }
+  return NULL;
 }

@@ -29,6 +29,12 @@ typedef struct _str_buf_t {
   uint16_t pad_len;
 } str_db_t;
 
+typedef struct _str8_buf_t {
+  vec_t vec;
+  char ex_pad;
+  uint16_t pad_len;
+} str8_db_t;
+
 int str_db_init(
     str_db_t *s,
     allocator_t *alloc,
@@ -54,3 +60,23 @@ const wchar_t *str_db_push_u16_be(str_db_t *s, const wchar_t *str, size_t cch);
 const wchar_t *str_db_str(str_db_t *s, size_t pos, const wchar_t *str);
 
 void str_db_loads(str_db_t *s, const wchar_t *str, size_t cch, wchar_t ex_pad);
+
+int str8_db_init(
+    str8_db_t *s,
+    allocator_t *alloc,
+    char ex_pad,
+    uint16_t pad_len);
+
+int str8_db_free(str8_db_t *s);
+
+size_t str8_db_tell(str8_db_t *s);
+
+size_t str8_db_seek(str8_db_t *s, size_t pos);
+
+const char *str8_db_next(str8_db_t *s, size_t *next_pos);
+
+const char *str8_db_get(str8_db_t *s, size_t pos);
+
+const char *str8_db_push(str8_db_t *s, const char *str, size_t cch);
+
+const char *str8_db_str(str8_db_t *s, size_t pos, const char *str);

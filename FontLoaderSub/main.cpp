@@ -1,5 +1,8 @@
 #include "main.h"
 
+#include <cstring>
+#include <string>
+
 #include "ass_string.h"
 #include "exporter.h"
 #include "util.h"
@@ -7,8 +10,9 @@
 #include "shortcut.h"
 #include "mock_config.h"
 #include "res/resource.h"
+#include "utf.h"
 
-#define kCacheFile L"fc-subs.db"
+#define kCacheFile L"fc-subs.ftdb"
 #define kBlackFile L"fc-ignore.txt"
 #define kMessageWindowClass L"FontLoaderSubMessageWindow"
 
@@ -242,12 +246,18 @@ static int AppBuildLog(FL_AppCtx *c) {
       tag = L"[ X] ";
     else if (1 || m->flag & (FL_LOAD_MISS))
       tag = L"[??] ";
+    std::wstring face_w;
+    if (m->face && !Utf8ToUtf16(m->face, std::strlen(m->face), &face_w))
+      return 0;
     if (!str_db_push_u16_le(log, tag, 0) ||
-        !str_db_push_u16_le(log, m->face, 0))
+        !str_db_push_u16_le(log, face_w.c_str(), face_w.size()))
       return 0;
     if (m->filename && !(m->flag & FL_LOAD_DUP)) {
+      std::wstring file_w;
+      if (!Utf8ToUtf16(m->filename, std::strlen(m->filename), &file_w))
+        return 0;
       if (!str_db_push_u16_le(log, L" > ", 0) ||
-          !str_db_push_u16_le(log, m->filename, 0))
+          !str_db_push_u16_le(log, file_w.c_str(), file_w.size()))
         return 0;
     }
     if (!str_db_push_u16_le(log, L"\n", 0))

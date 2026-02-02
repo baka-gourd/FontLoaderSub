@@ -12,6 +12,10 @@
 #define CINTERFACE
 #endif
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <Windows.h>
 #include <stdint.h>
 
@@ -58,8 +62,8 @@ int FlMemMap(const wchar_t *path, memmap_t *mmap);
 
 int FlMemUnmap(memmap_t *mmap);
 
-wchar_t *
-FlTextDecode(const uint8_t *buf, size_t bytes, size_t *cch, allocator_t *alloc);
+char *
+FlTextDecode(const uint8_t *buf, size_t bytes, size_t *len, allocator_t *alloc);
 
 int FlVersionCmp(const wchar_t *a, const wchar_t *b);
 

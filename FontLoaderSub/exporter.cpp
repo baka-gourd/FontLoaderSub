@@ -1,6 +1,11 @@
 #include "exporter.h"
 
+#include <cstring>
+#include <string>
+
 #include <Shobjidl.h>
+
+#include "utf.h"
 
 #define C_SAVE_RELEASE(obj)          \
   do {                               \
@@ -56,8 +61,11 @@ static HRESULT LFEC_NextOne(LoadedFontEnumCtx *c, IShellItem **item) {
     c->i++;
     if (m->filename != NULL && (m->flag & FL_LOAD_DUP) == 0) {
       if (item != NULL) {
+        std::wstring file_w;
+        if (!Utf8ToUtf16(m->filename, std::strlen(m->filename), &file_w))
+          return E_FAIL;
         return SHCreateItemFromRelativeName(
-            c->root, m->filename, NULL, IID_IShellItem, (void **)item);
+            c->root, file_w.c_str(), NULL, IID_IShellItem, (void **)item);
       } else {
         return S_OK;  // simulate create success
       }

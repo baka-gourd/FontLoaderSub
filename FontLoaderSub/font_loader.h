@@ -14,18 +14,18 @@ typedef enum {
 
 typedef struct {
   FL_MatchFlag flag;
-  const wchar_t *face;
-  const wchar_t *filename;
+  const char *face;
+  const char *filename;
   uint8_t hash[32];
 } FL_FontMatch;
 
 typedef struct {
   allocator_t *alloc;
-  str_db_t sub_font;
+  str8_db_t sub_font;
   // List of already processed subtitle file paths (NUL-separated strings).
   // Used to avoid double-counting and re-parsing when incremental loads
   // include previously processed files (e.g. dropping a folder after a file).
-  str_db_t loaded_sub_files;
+  str8_db_t loaded_sub_files;
   str_db_t font_path;
   str_db_t walk_path;
   FS_Set *font_set;

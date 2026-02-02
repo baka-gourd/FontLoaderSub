@@ -2,12 +2,16 @@
 
 #include <Windows.h>
 #include <bcrypt.h>
+
+#include <cstring>
+#include <string>
 #include "ass_string.h"
 #include "ass_parser.h"
 #include "path.h"
 #include "mock_config.h"
 #include "tim_sort.h"
 #include "util.h"
+#include "utf.h"
 
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 
@@ -18,8 +22,8 @@ int fl_init(FL_LoaderCtx *c, allocator_t *alloc) {
 
   do {
     vec_init(&c->loaded_font, sizeof(FL_FontMatch), alloc);
-    str_db_init(&c->sub_font, alloc, 0, 1);
-    str_db_init(&c->loaded_sub_files, alloc, 0, 1);
+    str8_db_init(&c->sub_font, alloc, 0, 1);
+    str8_db_init(&c->loaded_sub_files, alloc, 0, 1);
     str_db_init(&c->font_path, alloc, 0, 0);
     str_db_init(&c->walk_path, alloc, 0, 0);
 
@@ -45,8 +49,8 @@ int fl_free(FL_LoaderCtx *c) {
   CloseHandle(c->event_cancel);
   BCryptCloseAlgorithmProvider(c->hash_alg, 0);
   vec_free(&c->loaded_font);
-  str_db_free(&c->sub_font);
-  str_db_free(&c->loaded_sub_files);
+  str8_db_free(&c->sub_font);
+  str8_db_free(&c->loaded_sub_files);
   str_db_free(&c->font_path);
   str_db_free(&c->walk_path);
   fs_free(c->font_set);
@@ -54,22 +58,35 @@ int fl_free(FL_LoaderCtx *c) {
   return FL_OK;
 }
 
+static bool fl_path_to_lower_utf8(const wchar_t *path, std::string *out) {
+  if (path == NULL || out == NULL)
+    return false;
+  std::wstring tmp(path);
+  if (!tmp.empty()) {
+    CharLowerBuffW(&tmp[0], (DWORD)tmp.size());
+  }
+  return Utf16ToUtf8(tmp, out);
+}
+
 static int fl_is_sub_file_loaded(FL_LoaderCtx *c, const wchar_t *filePath) {
-  const wchar_t *data = (const wchar_t *)str_db_get(&c->loaded_sub_files, 0);
-  size_t totalLen = str_db_tell(&c->loaded_sub_files);
-  for (size_t pos = 0; pos < totalLen;) {
-    const wchar_t *loadedPath = data + pos;
-    size_t len = wcslen(loadedPath);
-    if (len > 0 && _wcsicmp(filePath, loadedPath) == 0) {
+  std::string needle;
+  if (!fl_path_to_lower_utf8(filePath, &needle))
+    return 0;
+
+  size_t pos = 0;
+  const char *loaded_path = NULL;
+  while ((loaded_path = str8_db_next(&c->loaded_sub_files, &pos)) != NULL) {
+    if (std::strcmp(loaded_path, needle.c_str()) == 0)
       return 1;
-    }
-    pos += len + 1;
   }
   return 0;
 }
 
 static int fl_add_sub_file_loaded(FL_LoaderCtx *c, const wchar_t *filePath) {
-  return str_db_push_u16_le(&c->loaded_sub_files, filePath, 0) != NULL;
+  std::string value;
+  if (!fl_path_to_lower_utf8(filePath, &value))
+    return 0;
+  return str8_db_push(&c->loaded_sub_files, value.c_str(), 0) != NULL;
 }
 
 int fl_cancel(FL_LoaderCtx *c) {
@@ -82,7 +99,7 @@ static int fl_check_cancel(FL_LoaderCtx *c) {
   return FL_OK;
 }
 
-static int fl_sub_font_callback(const wchar_t *font, size_t cch, void *arg) {
+static int fl_sub_font_callback(const char *font, size_t cch, void *arg) {
   FL_LoaderCtx *c = (FL_LoaderCtx *)arg;
   if (cch != 0) {
     if (font[0] == '@') {
@@ -93,18 +110,18 @@ static int fl_sub_font_callback(const wchar_t *font, size_t cch, void *arg) {
     if (cch == 0)
       return FL_OK;
 
-    const size_t pos = str_db_tell(&c->sub_font);
-    const wchar_t *insert = str_db_push_u16_le(&c->sub_font, font, cch);
+    const size_t pos = str8_db_tell(&c->sub_font);
+    const char *insert = str8_db_push(&c->sub_font, font, cch);
     if (insert == NULL) {
       return FL_OUT_OF_MEMORY;
     }
 
-    const wchar_t *match = str_db_str(&c->sub_font, 0, insert);
+    const char *match = str8_db_str(&c->sub_font, 0, insert);
     if (match == insert) {
       // not duplicated
       c->num_sub_font++;
     } else {
-      str_db_seek(&c->sub_font, pos);
+      str8_db_seek(&c->sub_font, pos);
     }
   }
   return FL_OK;
@@ -138,8 +155,8 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
     return FL_OK;
 
   memmap_t map;
-  wchar_t *content = NULL;
-  size_t cch = 0;
+  char *content = NULL;
+  size_t content_len = 0;
 
   FlMemMap(path, &map);
   if (!map.data) {
@@ -147,7 +164,8 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
     return FL_OK;
   }
 
-  content = FlTextDecode((const uint8_t *)map.data, map.size, &cch, c->alloc);
+  content =
+      FlTextDecode((const uint8_t *)map.data, map.size, &content_len, c->alloc);
   if (content == NULL) {
     // ignore error
     FlMemUnmap(&map);
@@ -161,7 +179,7 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   }
 
   c->num_sub++;
-  ass_process_data(content, cch, fl_sub_font_callback, c);
+  ass_process_data(content, content_len, fl_sub_font_callback, c);
   if (MOCK_DELAY_SUB)
     Sleep(MOCK_DELAY_SUB);
 
@@ -214,26 +232,30 @@ fl_walk_font_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   if (map.data) {
     // skip the base path + '\'
     const wchar_t *tag = path + str_db_tell(&c->font_path) + 1;
-    fs_add_font(c->font_set, tag, map.data, map.size);
+    std::string tag_u8;
+    if (Utf16ToUtf8(tag, wcslen(tag), &tag_u8)) {
+      fs_add_font(c->font_set, tag_u8.c_str(), map.data, map.size);
+    }
     FlMemUnmap(&map);
   }
   return FL_OK;
 }
 
-static void
-fl_blacklist_parse(FL_LoaderCtx *c, const wchar_t *data, size_t cch) {
-  const wchar_t *p = data;
-  const wchar_t *eos = data + cch;
+static void fl_blacklist_parse(FL_LoaderCtx *c, const char *data, size_t len) {
+  const char *p = data;
+  const char *eos = data + len;
   while (p != eos) {
     // skip blank lines
     while (p != eos && ass_is_eol(*p))
       ++p;
     // find end of the line
-    const wchar_t *q = p;
+    const char *q = p;
     while (q != eos && !ass_is_eol(*q))
       ++q;
 
-    fs_blacklist_add(c->font_set, p, q - p);
+    if (q > p) {
+      fs_blacklist_add(c->font_set, p, (size_t)(q - p));
+    }
     p = q;
   }
 }
@@ -250,16 +272,17 @@ static void fl_blacklist_load(FL_LoaderCtx *c, const wchar_t *filename) {
     return;
   }
   memmap_t map;
-  wchar_t *content = NULL;
-  size_t cch = 0;
+  char *content = NULL;
+  size_t content_len = 0;
   do {
     FlMemMap(str_db_get(&c->walk_path, 0), &map);
     if (!map.data)
       break;
-    content = FlTextDecode((const uint8_t *)map.data, map.size, &cch, c->alloc);
+    content = FlTextDecode(
+        (const uint8_t *)map.data, map.size, &content_len, c->alloc);
     if (content == NULL)
       break;
-    fl_blacklist_parse(c, content, cch);
+    fl_blacklist_parse(c, content, content_len);
 
   } while ((0));
 
@@ -362,18 +385,26 @@ static int CALLBACK enum_fonts(
   return 1;  // continue
 }
 
-static int IsFontInstalled(const wchar_t *face) {
+static bool fl_utf8_to_utf16(const char *input, std::wstring *output) {
+  if (input == NULL || output == NULL)
+    return false;
+  return Utf8ToUtf16(input, std::strlen(input), output);
+}
+
+static int IsFontInstalled(const char *face) {
   if (MOCK_NO_SYS)
+    return 0;
+  std::wstring face_w;
+  if (!fl_utf8_to_utf16(face, &face_w))
     return 0;
   int found = 0;
   HDC dc = GetDC(0);
-  EnumFontFamilies(dc, face, enum_fonts, (LPARAM)&found);
+  EnumFontFamiliesW(dc, face_w.c_str(), enum_fonts, (LPARAM)&found);
   ReleaseDC(0, dc);
   return found;
 }
 
-static int fl_face_loaded(FL_LoaderCtx *c, const wchar_t *face) {
-  const size_t pos = str_db_tell(&c->walk_path);
+static int fl_face_loaded(FL_LoaderCtx *c, const char *face) {
   FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
   for (size_t i = 0; i != c->loaded_font.n; i++) {
     FL_FontMatch *m = &data[i];
@@ -383,7 +414,7 @@ static int fl_face_loaded(FL_LoaderCtx *c, const wchar_t *face) {
   return 0;
 }
 
-static int fl_file_loaded(FL_LoaderCtx *c, const wchar_t *file) {
+static int fl_file_loaded(FL_LoaderCtx *c, const char *file) {
   const size_t pos = str_db_tell(&c->walk_path);
   FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
   for (size_t i = 0; i != c->loaded_font.n; i++) {
@@ -392,6 +423,20 @@ static int fl_file_loaded(FL_LoaderCtx *c, const wchar_t *file) {
       return i;
   }
   return -1;
+}
+
+static int fl_utf8_casecmp(const char *a, const char *b) {
+  if (a == NULL)
+    return b ? -1 : 0;
+  if (b == NULL)
+    return 1;
+  std::wstring wa;
+  std::wstring wb;
+  if (!Utf8ToUtf16(a, std::strlen(a), &wa))
+    return -1;
+  if (!Utf8ToUtf16(b, std::strlen(b), &wb))
+    return 1;
+  return FlStrCmpIW(wa.c_str(), wb.c_str());
 }
 
 static int fl_hash_loaded(FL_LoaderCtx *c, const uint8_t hash[32]) {
@@ -453,11 +498,8 @@ fl_calc_hash(FL_LoaderCtx *c, const void *data, size_t size, uint8_t res[32]) {
   return ok ? FL_OK : FL_OS_ERROR;
 }
 
-static int fl_load_file(
-    FL_LoaderCtx *c,
-    const wchar_t *face,
-    const wchar_t *file,
-    int *dup) {
+static int
+fl_load_file(FL_LoaderCtx *c, const char *face, const char *file, int *dup) {
   int r = FL_OK;
   int candidate;
   memmap_t map = {0};
@@ -479,9 +521,14 @@ static int fl_load_file(
 
     // check 2: hash
     str_db_seek(&c->walk_path, 0);
+    std::wstring file_w;
+    if (!Utf8ToUtf16(file, std::strlen(file), &file_w)) {
+      r = FL_OUT_OF_MEMORY;
+      break;
+    }
     if (!str_db_push_u16_le(&c->walk_path, str_db_get(&c->font_path, 0), 0) ||
         !str_db_push_u16_le(&c->walk_path, L"\\", 1) ||
-        !str_db_push_u16_le(&c->walk_path, file, 0)) {
+        !str_db_push_u16_le(&c->walk_path, file_w.c_str(), file_w.size())) {
       r = FL_OUT_OF_MEMORY;
       break;
     }
@@ -553,7 +600,7 @@ int fl_load_rec_sort(const void *ptr_a, const void *ptr_b, void *arg) {
     return -1;
   if (!b->filename)
     return 1;
-  const int ds = FlStrCmpIW(a->filename, b->filename);
+  const int ds = fl_utf8_casecmp(a->filename, b->filename);
   if (ds != 0)
     return ds;
 
@@ -564,7 +611,7 @@ int fl_load_rec_sort(const void *ptr_a, const void *ptr_b, void *arg) {
     return 1;
 
   // last resort
-  return FlStrCmpIW(a->face, b->face);
+  return fl_utf8_casecmp(a->face, b->face);
 }
 
 int fl_load_fonts(FL_LoaderCtx *c) {
@@ -575,8 +622,8 @@ int fl_load_fonts(FL_LoaderCtx *c) {
 
   // pass 1: scan for existing fonts
   size_t pos_it = 0;
-  const wchar_t *face;
-  while (r == FL_OK && (face = str_db_next(&c->sub_font, &pos_it)) != NULL) {
+  const char *face;
+  while (r == FL_OK && (face = str8_db_next(&c->sub_font, &pos_it)) != NULL) {
     if ((r = fl_check_cancel(c)) != FL_OK)
       return r;
 
@@ -598,7 +645,7 @@ int fl_load_fonts(FL_LoaderCtx *c) {
   const size_t sys_fonts = c->loaded_font.n;
   pos_it = 0;
   while (r != FL_OUT_OF_MEMORY &&
-         (face = str_db_next(&c->sub_font, &pos_it)) != NULL) {
+         (face = str8_db_next(&c->sub_font, &pos_it)) != NULL) {
     if (fl_face_loaded(c, face))
       continue;
     if (vec_prealloc(&c->loaded_font, 1) == 0) {
@@ -659,8 +706,8 @@ int fl_load_fonts_incremental(FL_LoaderCtx *c) {
 
   // pass 1: scan for existing fonts (skip already loaded ones)
   size_t pos_it = 0;
-  const wchar_t *face;
-  while (r == FL_OK && (face = str_db_next(&c->sub_font, &pos_it)) != NULL) {
+  const char *face;
+  while (r == FL_OK && (face = str8_db_next(&c->sub_font, &pos_it)) != NULL) {
     if ((r = fl_check_cancel(c)) != FL_OK)
       return r;
 
@@ -685,7 +732,7 @@ int fl_load_fonts_incremental(FL_LoaderCtx *c) {
   const size_t sys_fonts = c->loaded_font.n;
   pos_it = 0;
   while (r != FL_OUT_OF_MEMORY &&
-         (face = str_db_next(&c->sub_font, &pos_it)) != NULL) {
+         (face = str8_db_next(&c->sub_font, &pos_it)) != NULL) {
     if (fl_face_loaded(c, face))
       continue;
     if (vec_prealloc(&c->loaded_font, 1) == 0) {
@@ -751,8 +798,12 @@ int fl_walk_loaded_fonts(FL_LoaderCtx *c, WalkLoadedCallback cb, void *param) {
     const wchar_t *path = NULL;
     FL_FontMatch *m = &data[i];
     str_db_seek(&c->walk_path, pos);
-    if (m->filename && str_db_push_u16_le(&c->walk_path, m->filename, 0)) {
-      path = str_db_get(&c->walk_path, 0);
+    if (m->filename) {
+      std::wstring file_w;
+      if (Utf8ToUtf16(m->filename, std::strlen(m->filename), &file_w) &&
+          str_db_push_u16_le(&c->walk_path, file_w.c_str(), file_w.size())) {
+        path = str_db_get(&c->walk_path, 0);
+      }
     }
     // trigger callback
     const int ret = cb(c, i, path, param);

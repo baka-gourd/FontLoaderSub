@@ -1,53 +1,160 @@
 #include "font_set.h"
 
-#include "cstl.h"
+#include "font_db_generated.h"
 #include "ttf_parser.h"
-#include "ass_string.h"
-#include "tim_sort.h"
 #include "util.h"
+#include "utf.h"
 
-#define MAKE_TAG(a, b, c, d)                                             \
-  ((uint32_t)(((uint8_t)(d) << 24)) | (uint32_t)(((uint8_t)(c) << 16)) | \
-   (uint32_t)(((uint8_t)(b) << 8)) | (uint32_t)(((uint8_t)(a))))
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <new>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
-#define KFontDbMagic (MAKE_TAG('f', 'l', 'd', 'd'))
+typedef struct {
+  std::string tag;
+  std::string face;
+  std::string ver;
+  FS_Format format;
+} FS_Entry;
 
 struct _FS_Set {
   allocator_t *alloc;
-  str_db_t db;
-  str_db_t blacklist;
-  FS_Stat stat;
+  std::vector<FS_Entry> entries;
+  std::vector<std::string> blacklist;
+  std::vector<FS_Index> index_vec;
   FS_Index *index;
-  memmap_t map;
+  FS_Stat stat;
 };
 
 typedef struct {
-  FS_Set *set;
-  uint32_t id;
-  size_t pos_ver;       // point to version
-  size_t pos_face;      // point to first face name
-  uint32_t count_face;  // number of discovered face name
-  uint16_t last_lang_id;
-} FS_ParseCtx;
+  std::string ver;
+  uint16_t ver_lang_id;
+  std::unordered_set<std::string> faces;
+} FS_FontAccum;
 
 typedef struct {
-  uint32_t magic;
-  FS_Stat stat;
-  uint32_t size;
-} FS_CacheHeader;
+  FS_Set *set;
+  std::unordered_map<uint32_t, FS_FontAccum> fonts;
+  uint32_t count_face;
+} FS_ParseCtx;
 
-#define kTagVersion L"\tv:"
-#define kTagVersionLen (3)
-#define kTagFormat L"\tt:"
-#define kTagFormatLen (3)
-#define kTagError L"\t!!"
-#define kTagErrorLen (3)
+static int fs_tolower_ascii(int ch) {
+  if ('A' <= ch && ch <= 'Z')
+    return ch - 'A' + 'a';
+  return ch;
+}
 
-static const WCHAR kFsFmtTag[FS_FmtMax][4] =
-    {  // format hack
-        L"", L"otf", L"ttf", L"ttc"};
+static int fs_stricmp_ascii(const char *a, const char *b) {
+  if (a == NULL)
+    return b ? -1 : 0;
+  if (b == NULL)
+    return 1;
+  while (*a && *b) {
+    int da = fs_tolower_ascii(*a);
+    int db = fs_tolower_ascii(*b);
+    if (da != db)
+      return da - db;
+    ++a;
+    ++b;
+  }
+  return fs_tolower_ascii(*a) - fs_tolower_ascii(*b);
+}
 
-static void fs_format_tag_to_str(FS_Format fmt, WCHAR s[4]);
+static int fs_strncasecmp_ascii(const char *a, const char *b, size_t n) {
+  for (size_t i = 0; i < n; i++) {
+    int ca = fs_tolower_ascii(a[i]);
+    int cb = fs_tolower_ascii(b[i]);
+    if (ca != cb)
+      return ca - cb;
+    if (a[i] == 0 || b[i] == 0)
+      return ca - cb;
+  }
+  return 0;
+}
+
+static size_t fs_prefix_len_ci(const char *a, const char *b) {
+  size_t i = 0;
+  for (; a[i] && b[i]; i++) {
+    int ca = fs_tolower_ascii(a[i]);
+    int cb = fs_tolower_ascii(b[i]);
+    if (ca != cb)
+      break;
+  }
+  return i;
+}
+
+static int fs_is_digit(int ch) {
+  return ('0' <= ch && ch <= '9') ? (ch - '0') : -1;
+}
+
+static int fs_version_cmp_utf8(const char *a, const char *b) {
+  const char *ptr_a = a;
+  const char *ptr_b = b;
+  int cmp = 0;
+
+  if (b == NULL)
+    return 1;
+  if (a == NULL)
+    return -1;
+
+  while (*ptr_a && *ptr_b && cmp == 0) {
+    if (fs_is_digit(*ptr_a) >= 0 && fs_is_digit(*ptr_b) >= 0) {
+      const char *start_a = ptr_a, *start_b = ptr_b;
+      while (fs_is_digit(*ptr_a) >= 0)
+        ptr_a++;
+      while (fs_is_digit(*ptr_b) >= 0)
+        ptr_b++;
+      const char *dig_a = ptr_a, *dig_b = ptr_b;
+      while (dig_a != start_a && dig_b != start_b) {
+        dig_a--;
+        dig_b--;
+        cmp = *dig_a - *dig_b;
+      }
+      if (cmp == 0) {
+        cmp = (int)((ptr_a - start_a) - (ptr_b - start_b));
+      }
+    } else {
+      cmp = *ptr_a - *ptr_b;
+      ptr_a++;
+      ptr_b++;
+    }
+  }
+
+  if (cmp == 0)
+    cmp = *ptr_a - *ptr_b;
+  return cmp;
+}
+
+static size_t fs_strnlen(const char *str, size_t n) {
+  for (size_t i = 0; i != n; i++) {
+    if (str[i] == 0)
+      return i;
+  }
+  return n;
+}
+
+static bool fs_utf16be_to_utf8(
+    const wchar_t *str,
+    size_t cch,
+    std::string *out) {
+  if (out == NULL)
+    return false;
+  out->clear();
+  if (cch == 0)
+    return true;
+
+  std::wstring tmp;
+  tmp.resize(cch);
+  const uint16_t *src = (const uint16_t *)str;
+  for (size_t i = 0; i != cch; i++) {
+    tmp[i] = (wchar_t)be16(src[i]);
+  }
+  return Utf16ToUtf8(tmp, out);
+}
 
 static int fs_parser_name_cb(
     uint32_t font_id,
@@ -55,307 +162,159 @@ static int fs_parser_name_cb(
     const wchar_t *str,
     void *arg) {
   FS_ParseCtx *c = (FS_ParseCtx *)arg;
-  FS_Set *s = c->set;
   const uint32_t cch = be16(r->length) / sizeof str[0];
-
-  if (font_id != c->id) {
-    // new font
-    c->id = font_id;
-    c->pos_ver = str_db_tell(&s->db);
-    c->pos_face = c->pos_ver;
-    c->last_lang_id = 0;
-  }
-
   if (cch == 0)
     return FL_OK;
 
+  FS_FontAccum &font = c->fonts[font_id];
   if (r->name_id == be16(5)) {
-    // this is a version record
-    if (c->last_lang_id == 0 || r->lang_id == be16(0x0409)) {
-      // no previous version record, or encountered English version.
-      // update/overwrite
-      str_db_seek(&s->db, c->pos_ver);
-      if (!str_db_push_prefix(&s->db, kTagVersion, kTagVersionLen))
+    if (font.ver_lang_id == 0 || r->lang_id == be16(0x0409)) {
+      std::string ver;
+      if (!fs_utf16be_to_utf8(str, cch, &ver))
         return FL_OUT_OF_MEMORY;
-      const wchar_t *ver = str_db_push_u16_be(&s->db, str, cch);
-      if (ver == NULL)
-        return FL_OUT_OF_MEMORY;
-
-      c->last_lang_id = r->lang_id;
-      c->pos_face = str_db_tell(&s->db);
+      font.ver = ver;
+      font.ver_lang_id = r->lang_id;
     }
   } else {
-    // first, convert to little endian (and insert into database)
-    const size_t pos_insert = str_db_tell(&s->db);
-    const wchar_t *face = str_db_push_u16_be(&s->db, str, cch);
-    if (face == NULL)
+    std::string face;
+    if (!fs_utf16be_to_utf8(str, cch, &face))
       return FL_OUT_OF_MEMORY;
-
-    // check duplication
-    const wchar_t *prev_face = str_db_str(&s->db, c->pos_face, face);
-    if (prev_face == face) {
-      ++c->count_face;
-    } else {
-      // duplicated, revert
-      str_db_seek(&s->db, pos_insert);
+    if (!face.empty()) {
+      if (font.faces.insert(face).second) {
+        c->count_face++;
+      }
     }
   }
 
   return FL_OK;
 }
 
-int fs_create(allocator_t *alloc, FS_Set **out) {
-  int ok = 0;
-  FS_Set *p = NULL;
-  do {
-    p = (FS_Set *)alloc->alloc(p, sizeof *p, alloc->arg);
-    if (!p)
-      break;
-    str_db_init(&p->db, alloc, '\n', 2);
-    str_db_init(&p->blacklist, alloc, 0, 1);
-
-    p->alloc = alloc;
-    ok = 1;
-  } while (0);
-
-  if (!ok) {
-    alloc->alloc(p, 0, alloc->arg);
-    p = NULL;
+static int fs_idx_comp(const FS_Index &a, const FS_Index &b) {
+  int cmp = fs_stricmp_ascii(a.face, b.face);
+  if (cmp == 0) {
+    cmp = 0 - (int)(a.format - b.format);
+    if (cmp == 0) {
+      cmp = 0 - fs_version_cmp_utf8(a.ver, b.ver);
+    }
   }
-  *out = p;
-  return ok ? FL_OK : FL_OUT_OF_MEMORY;
+  return cmp;
+}
+
+int fs_create(allocator_t *alloc, FS_Set **out) {
+  if (out == NULL)
+    return FL_OUT_OF_MEMORY;
+  void *mem = alloc->alloc(NULL, sizeof(FS_Set), alloc->arg);
+  if (!mem) {
+    *out = NULL;
+    return FL_OUT_OF_MEMORY;
+  }
+  FS_Set *s = new (mem) FS_Set();
+  s->alloc = alloc;
+  s->index = NULL;
+  s->stat = {};
+  *out = s;
+  return FL_OK;
 }
 
 int fs_free(FS_Set *s) {
   if (s) {
     allocator_t *alloc = s->alloc;
-    str_db_free(&s->db);
-    str_db_free(&s->blacklist);
-    FlMemUnmap(&s->map);
+    s->~FS_Set();
     alloc->alloc(s, 0, alloc->arg);
   }
   return FL_OK;
 }
 
 int fs_stat(FS_Set *s, FS_Stat *stat) {
-  if (s) {
+  if (s && stat) {
     *stat = s->stat;
   }
   return 0;
 }
 
-int fs_add_font(FS_Set *s, const wchar_t *tag, void *buf, size_t size) {
-  int ok = 0, r = FL_OK;
-  str_db_t *db = &s->db;
-  const size_t pos_filename = str_db_tell(db);
-  size_t pos_db = 0, pos_db_fmt = 0;
+int fs_add_font(FS_Set *s, const char *tag, void *buf, size_t size) {
+  if (s == NULL || tag == NULL || buf == NULL || size == 0)
+    return FL_UNRECOGNIZED;
 
-  FS_ParseCtx ctx;
-  WCHAR fmt[4];
+  int r = FL_OK;
+  int ok = 0;
+  FS_Format fmt = FS_FmtNone;
+  FS_ParseCtx ctx = {};
+
   do {
-    if (str_db_push_u16_le(db, tag, 0) == NULL)
-      break;
-    // try TTC
-    pos_db_fmt = str_db_tell(db);
-    fs_format_tag_to_str(FS_FmtTTC, fmt);
-    if (str_db_push_prefix(db, kTagFormat, kTagFormatLen) == NULL ||
-        str_db_push_u16_le(db, fmt, 0) == NULL)
-      break;
-
-    pos_db = str_db_tell(db);
-    ctx = {};
-    ctx.set = s;
-    ctx.pos_ver = pos_db;
-    ctx.pos_face = pos_db;
     r = ttc_parse((const uint8_t *)buf, size, fs_parser_name_cb, &ctx);
     if (r == FL_OK && ctx.count_face > 0) {
+      fmt = FS_FmtTTC;
       ok = 1;
       break;
     }
 
-    // try with TTF/OTF
+    ctx.fonts.clear();
+    ctx.count_face = 0;
     const uint8_t *buffer = (const uint8_t *)buf;
-    fs_format_tag_to_str(buffer[0] == 'O' ? FS_FmtOTF : FS_FmtTTF, fmt);
-    str_db_seek(db, pos_db_fmt);
-    if (str_db_push_prefix(db, kTagFormat, kTagFormatLen) == NULL ||
-        str_db_push_u16_le(db, fmt, 0) == NULL)
-      break;
-
-    pos_db = str_db_tell(db);
-    ctx = {};
-    ctx.set = s;
-    ctx.pos_ver = pos_db;
-    ctx.pos_face = pos_db;
+    fmt = (buffer[0] == 'O') ? FS_FmtOTF : FS_FmtTTF;
     r = otf_parse((const uint8_t *)buf, size, fs_parser_name_cb, &ctx);
     if (r == FL_OK && ctx.count_face > 0) {
       ok = 1;
       break;
     }
-    int break_here = 0;
   } while (0);
-
-  if (ok) {
-    if (!str_db_push_u16_le(db, L"", 0)) {
-      r = FL_OUT_OF_MEMORY;
-      ok = 0;
-    }
-  }
 
   s->stat.num_file++;
   if (ok) {
+    for (const auto &item : ctx.fonts) {
+      const FS_FontAccum &font = item.second;
+      for (const auto &face : font.faces) {
+        FS_Entry e;
+        e.tag = tag;
+        e.face = face;
+        e.ver = font.ver;
+        e.format = fmt;
+        s->entries.push_back(e);
+      }
+    }
     s->stat.num_face += ctx.count_face;
-  } else {
-    // try preserve error message
-    const wchar_t *m1 = NULL, *m2 = NULL;
-    if (pos_db != 0) {
-      str_db_seek(db, pos_db);
-      m1 = str_db_push_u16_le(db, kTagError, kTagErrorLen);
-      m2 = str_db_push_u16_le(db, L"", 0);
-      FlBreak();
-    }
-    if (!(m1 && m2)) {
-      // completely rollback
-      str_db_seek(db, pos_filename);
-      s->stat.num_file--;
-    }
-  }
-  return r;
-}
-
-static int fs_idx_comp(const void *pa, const void *pb, void *arg) {
-  // FS_Set *s = arg;
-  const FS_Index *a = (const FS_Index *)pa;
-  const FS_Index *b = (const FS_Index *)pb;
-
-  // first, compare the name
-  int cmp = FlStrCmpIW(a->face, b->face);
-  if (cmp == 0) {
-    // second, compare by format
-    cmp = 0 - (a->format - b->format);
-    if (cmp == 0) {
-      // last, compare by version
-      cmp = 0 - FlVersionCmp(a->ver, b->ver);
-    }
   }
 
-  return cmp;
-}
-
-static FS_Format fs_format_str_to_tag(const WCHAR s[4]) {
-  for (int i = 0; i != FS_FmtMax; i++) {
-    if (ass_strncmp(s, kFsFmtTag[i], 4) == 0) {
-      return (FS_Format)i;
-    }
-  }
-  return FS_FmtNone;
-}
-
-static void fs_format_tag_to_str(FS_Format fmt, WCHAR s[4]) {
-  int i = fmt;
-  if (FS_FmtNone <= i && i < FS_FmtMax) {
-    zmemcpy(s, kFsFmtTag[i], sizeof kFsFmtTag[i]);
-  } else {
-    s[0] = 0;
-  }
-}
-
-static void fs_debug_write_line(HANDLE f, const WCHAR *line) {
-  DWORD nb = lstrlen(line) * sizeof line[0];
-  DWORD out = 0;
-  WriteFile(f, line, nb, &out, NULL);
-}
-
-static void fs_index_debug_dump(FS_Set *s) {
-  HANDLE f = CreateFile(
-      L"FontIndexDebugDump.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-      FILE_ATTRIBUTE_NORMAL, NULL);
-  for (unsigned int i = 0; i != s->stat.num_face; i++) {
-    WCHAR fmt[4];
-    fs_format_tag_to_str(s->index[i].format, fmt);
-    fs_debug_write_line(f, L"[");
-    fs_debug_write_line(f, fmt);
-    fs_debug_write_line(f, L"] ");
-    fs_debug_write_line(f, s->index[i].face);
-    fs_debug_write_line(f, L" ");
-    fs_debug_write_line(f, s->index[i].tag);
-    fs_debug_write_line(f, L" ");
-    fs_debug_write_line(f, s->index[i].ver);
-    fs_debug_write_line(f, L"\n");
-  }
-  CloseHandle(f);
+  return ok ? FL_OK : r;
 }
 
 int fs_build_index(FS_Set *s) {
-  allocator_t *alloc = s->alloc;
-  const size_t idx_size = s->stat.num_face * sizeof s->index[0];
-  FS_Index *idx = (FS_Index *)alloc->alloc(s->index, idx_size, alloc->arg);
-  s->index = idx;
-  if (idx == NULL) {
-    return s->stat.num_face ? FL_OUT_OF_MEMORY : FL_OK;
+  if (s == NULL)
+    return FL_OUT_OF_MEMORY;
+
+  s->stat.num_face = (uint32_t)s->entries.size();
+  s->index_vec.clear();
+  s->index_vec.reserve(s->entries.size());
+  for (const auto &e : s->entries) {
+    FS_Index idx = {};
+    idx.tag = e.tag.c_str();
+    idx.face = e.face.c_str();
+    idx.ver = e.ver.empty() ? NULL : e.ver.c_str();
+    idx.format = e.format;
+    s->index_vec.push_back(idx);
   }
 
-  // for checking only
-  FS_Stat stat = {};
+  std::sort(
+      s->index_vec.begin(), s->index_vec.end(),
+      [](const FS_Index &a, const FS_Index &b) {
+        return fs_idx_comp(a, b) < 0;
+      });
 
-  int err = 0;
-  int has_filename = 0;
-  const wchar_t *line;
-  size_t pos = 0;
-  FS_Index last_idx = {0};
-  while (!err && (line = str_db_next(&s->db, &pos)) != NULL) {
-    if (line[0] == 0) {
-      // empty line
-      last_idx = {};
-      has_filename = 0;
-    } else if (ass_strncmp(line, kTagVersion, kTagVersionLen) == 0) {
-      // update version
-      last_idx.ver = line + kTagVersionLen;
-    } else if (ass_strncmp(line, kTagFormat, kTagFormatLen) == 0) {
-      last_idx.format = fs_format_str_to_tag(line + kTagFormatLen);
-    } else if (ass_strncmp(line, kTagError, kTagErrorLen) == 0) {
-      // ignore
-    } else if (!has_filename) {
-      // update filename
-      last_idx.tag = line;
-      has_filename = 1;
-      stat.num_file++;
-    } else {
-      // face
-      if (stat.num_face == s->stat.num_face) {
-        err = 1;
-        break;
-      }
-      last_idx.face = line;
-      idx[stat.num_face++] = last_idx;
-    }
-  }
-
-  if (stat.num_face != s->stat.num_face || stat.num_file != s->stat.num_file)
-    err = 1;
-
-  if (!err) {
-    // sort
-    tim_sort(idx, stat.num_face, sizeof idx[0], s->alloc, fs_idx_comp, s);
-    // fs_index_debug_dump(s);
-  } else {
-    alloc->alloc(idx, 0, alloc->arg);
-    idx = NULL;
-    s->index = idx;
-  }
-
-  return err ? FL_OUT_OF_MEMORY : FL_OK;
+  s->index = s->index_vec.empty() ? NULL : s->index_vec.data();
+  return FL_OK;
 }
 
-int fs_iter_new(FS_Set *s, const wchar_t *face, FS_Iter *it) {
+int fs_iter_new(FS_Set *s, const char *face, FS_Iter *it) {
   if (s == NULL || s->index == NULL || it == NULL)
     return 0;
-  int a = 0, b = s->stat.num_face - 1;
+  int a = 0, b = (int)s->stat.num_face - 1;
   int m = 0;
   if (s->index != NULL && s->stat.num_face != 0) {
     while (a <= b) {
       m = a + (b - a) / 2;
-      const wchar_t *got = s->index[m].face;
-      const int t = FlStrCmpIW(face, got);
+      const char *got = s->index[m].face;
+      const int t = fs_stricmp_ascii(face, got);
       if (t == 0) {
         a = b = m;
         break;
@@ -372,15 +331,13 @@ int fs_iter_new(FS_Set *s, const wchar_t *face, FS_Iter *it) {
     if (!(a == b && a == m)) {
       break;
     }
-    // found by fontface, skip to first match
-    while (m > 0 && FlStrCmpIW(face, s->index[m - 1].face) == 0) {
+    while (m > 0 && fs_stricmp_ascii(face, s->index[m - 1].face) == 0) {
       m--;
     }
-    // enforce blacklist
-    while (m != s->stat.num_face && fs_blacklist_match(s, s->index[m].tag)) {
+    while (m != (int)s->stat.num_face && fs_blacklist_match(s, s->index[m].tag)) {
       m++;
     }
-    if (m == s->stat.num_face) {
+    if (m == (int)s->stat.num_face) {
       break;
     }
     it->set = s;
@@ -388,21 +345,12 @@ int fs_iter_new(FS_Set *s, const wchar_t *face, FS_Iter *it) {
     it->index_id = m;
     it->info = s->index[m];
     return 1;
-  } while ((0));
+  } while (0);
 
-  // *it = (FS_Iter){0};
   it->set = NULL;
   it->query_id = 0;
   it->index_id = 0;
   return 0;
-}
-
-static size_t str_cmp_x(const wchar_t *a, const wchar_t *b) {
-  size_t r;
-  for (r = 0; a[r] == b[r] && a[r]; r++) {
-    // nop;
-  }
-  return r;
 }
 
 int fs_iter_next(FS_Iter *it) {
@@ -412,35 +360,31 @@ int fs_iter_next(FS_Iter *it) {
   if (it->index_id == s->stat.num_face)
     return 0;
   it->index_id++;
-  const wchar_t *face = s->index[it->query_id].face;
-  const wchar_t *ver = s->index[it->query_id].ver;
+  const char *face = s->index[it->query_id].face;
+  const char *ver = s->index[it->query_id].ver;
   FS_Format fmt = s->index[it->query_id].format;
 
   for (; it->index_id != s->stat.num_face; it->index_id++) {
-    const wchar_t *got_face = s->index[it->index_id].face;
-    const wchar_t *got_ver = s->index[it->index_id].ver;
+    const char *got_face = s->index[it->index_id].face;
+    const char *got_ver = s->index[it->index_id].ver;
     FS_Format got_fmt = s->index[it->index_id].format;
 
-    // check if prefix matches
-    const size_t df = str_cmp_x(face, got_face);
+    const size_t df = fs_prefix_len_ci(face, got_face);
     if (face[df] != 0) {
       break;
     }
 
-    // check format
     if (fmt != got_fmt) {
       continue;
     }
 
-    // check version
     if (ver == NULL) {
       if (got_ver != NULL)
         continue;
     } else {
       if (got_ver == NULL)
         continue;
-      const size_t dv = str_cmp_x(ver, got_ver);
-      if (ver[dv] != 0 || got_ver[dv] != 0)
+      if (strcmp(ver, got_ver) != 0)
         continue;
     }
 
@@ -448,116 +392,154 @@ int fs_iter_next(FS_Iter *it) {
       continue;
     }
 
-    // match found
     it->info = s->index[it->index_id];
     return 1;
   }
-  // iter end
-  // *it = (FS_Iter){0};
+
   it->set = NULL;
   return 0;
 }
 
 int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
-  int ok = 0, r;
-  FS_Set *s = NULL;
+  if (out == NULL)
+    return FL_OUT_OF_MEMORY;
+  *out = NULL;
+
   memmap_t map = {0};
+  int r = FlMemMap(path, &map);
+  if (map.data == NULL)
+    return FL_OS_ERROR;
 
-  do {
-    r = FlMemMap(path, &map);
-    if (map.data == NULL) {
-      r = FL_OS_ERROR;
-      break;
-    }
-
-    r = FL_UNRECOGNIZED;
-    FS_CacheHeader *head = (FS_CacheHeader *)map.data;
-    if (head->magic != KFontDbMagic)
-      break;
-    if (head->size != map.size)
-      break;
-    if (head->size < 8)
-      break;
-
-    // ensure NUL terminated
-    const wchar_t *buf_tail = (wchar_t *)((char *)map.data + head->size);
-    if (buf_tail[-1] != 0 && buf_tail[-2] != 0)
-      break;
-
-    r = FL_OUT_OF_MEMORY;
-    fs_create(alloc, &s);
-    if (s == NULL)
-      break;
-    str_db_loads(
-        &s->db, (const wchar_t *)&head[1],
-        (head->size - sizeof head[0]) / sizeof(wchar_t), '\n');
-    s->stat = head->stat;
-
-    ok = 1;
-  } while (0);
-
-  if (!ok) {
-    fs_free(s);
+  flatbuffers::Verifier verifier((const uint8_t *)map.data, map.size);
+  if (!fontloader::VerifyFontDbBuffer(verifier)) {
     FlMemUnmap(&map);
-    s = NULL;
-  } else {
-    s->map = map;
+    return FL_UNRECOGNIZED;
   }
 
+  const fontloader::FontDb *db = fontloader::GetFontDb(map.data);
+  if (db == NULL) {
+    FlMemUnmap(&map);
+    return FL_CORRUPTED;
+  }
+  if (db->version() != 1) {
+    FlMemUnmap(&map);
+    return FL_UNRECOGNIZED;
+  }
+
+  FS_Set *s = NULL;
+  r = fs_create(alloc, &s);
+  if (r != FL_OK) {
+    FlMemUnmap(&map);
+    return r;
+  }
+
+  const auto *entries = db->entries();
+  if (entries) {
+    s->entries.reserve(entries->size());
+    for (uint32_t i = 0; i != entries->size(); i++) {
+      const auto *entry = entries->Get(i);
+      if (entry == NULL || entry->tag() == NULL || entry->face() == NULL) {
+        fs_free(s);
+        FlMemUnmap(&map);
+        return FL_CORRUPTED;
+      }
+      FS_Entry e;
+      e.tag.assign(entry->tag()->c_str(), entry->tag()->size());
+      e.face.assign(entry->face()->c_str(), entry->face()->size());
+      if (entry->ver())
+        e.ver.assign(entry->ver()->c_str(), entry->ver()->size());
+      e.format = (FS_Format)entry->format();
+      s->entries.push_back(e);
+    }
+  }
+
+  s->stat.num_face = (uint32_t)s->entries.size();
+  s->stat.num_file = db->num_file();
+  if (s->stat.num_file == 0) {
+    std::unordered_set<std::string> tags;
+    tags.reserve(s->entries.size());
+    for (const auto &e : s->entries)
+      tags.insert(e.tag);
+    s->stat.num_file = (uint32_t)tags.size();
+  }
+
+  r = fs_build_index(s);
+  if (r != FL_OK) {
+    fs_free(s);
+    FlMemUnmap(&map);
+    return r;
+  }
+
+  FlMemUnmap(&map);
   *out = s;
-  return ok ? FL_OK : r;
+  return FL_OK;
 }
 
 int fs_cache_dump(FS_Set *s, const wchar_t *path) {
-  int ok = 0;
+  if (s == NULL)
+    return FL_OS_ERROR;
+
   DWORD flags = FILE_ATTRIBUTE_NORMAL;
   if (s->stat.num_file == 0)
     flags |= FILE_FLAG_DELETE_ON_CLOSE;
 
   HANDLE h = CreateFile(
       path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, flags, NULL);
-  do {
-    if (h == INVALID_HANDLE_VALUE)
-      break;
-    const wchar_t *buf = str_db_get(&s->db, 0);
-    FS_CacheHeader head = {};
-    head.magic = KFontDbMagic;
-    head.stat = s->stat;
-    head.size = sizeof head + str_db_tell(&s->db) * sizeof buf[0];
+  if (h == INVALID_HANDLE_VALUE)
+    return FL_OS_ERROR;
 
-    DWORD dw_out;
-    if (!WriteFile(h, &head, sizeof head, &dw_out, NULL))
-      break;
-    if (!WriteFile(h, buf, str_db_tell(&s->db) * sizeof buf[0], &dw_out, NULL))
-      break;
-    ok = 1;
-  } while (0);
+  flatbuffers::FlatBufferBuilder builder(1024);
+  std::vector<flatbuffers::Offset<fontloader::FontEntry>> entries_vec;
+  entries_vec.reserve(s->entries.size());
+  for (const auto &e : s->entries) {
+    auto tag = builder.CreateString(e.tag);
+    auto face = builder.CreateString(e.face);
+    flatbuffers::Offset<flatbuffers::String> ver = 0;
+    if (!e.ver.empty())
+      ver = builder.CreateString(e.ver);
+    auto entry = fontloader::CreateFontEntry(
+        builder, tag, face, ver, (fontloader::FontFormat)e.format);
+    entries_vec.push_back(entry);
+  }
 
+  auto entries = builder.CreateVector(entries_vec);
+  auto db = fontloader::CreateFontDb(
+      builder, 1, s->stat.num_file, s->stat.num_face, entries);
+  builder.Finish(db, fontloader::FontDbIdentifier());
+
+  DWORD written = 0;
+  BOOL ok = WriteFile(
+      h, builder.GetBufferPointer(), (DWORD)builder.GetSize(), &written, NULL);
   CloseHandle(h);
   return ok ? FL_OK : FL_OS_ERROR;
 }
 
 int fs_blacklist_clear(FS_Set *s) {
-  str_db_seek(&s->blacklist, 0);
+  if (s)
+    s->blacklist.clear();
   return 0;
 }
 
-int fs_blacklist_add(FS_Set *s, const wchar_t *path, size_t cch) {
-  const wchar_t *ret = str_db_push_u16_le(&s->blacklist, path, cch);
-  return ret == NULL;
+int fs_blacklist_add(FS_Set *s, const char *path, size_t cch) {
+  if (s == NULL || path == NULL)
+    return 1;
+  const size_t len = cch ? fs_strnlen(path, cch) : strlen(path);
+  if (len == 0)
+    return 0;
+  s->blacklist.emplace_back(path, len);
+  return 0;
 }
 
-int fs_blacklist_match(FS_Set *s, const wchar_t *path) {
-  size_t pos_it = 0;
-  const size_t len_path = ass_strlen(path);
-  const wchar_t *suffix;
-  while ((suffix = str_db_next(&s->blacklist, &pos_it)) != NULL) {
-    const size_t len_suffix = ass_strlen(suffix);
-    if (len_suffix > len_path) {
+int fs_blacklist_match(FS_Set *s, const char *path) {
+  if (s == NULL || path == NULL)
+    return 0;
+  const size_t len_path = strlen(path);
+  for (const auto &suffix : s->blacklist) {
+    const size_t len_suffix = suffix.size();
+    if (len_suffix > len_path)
       continue;
-    }
-    const wchar_t *path_sfx = path + len_path - len_suffix;
-    if (ass_strncasecmp(path_sfx, suffix, len_suffix) == 0) {
+    const char *path_sfx = path + len_path - len_suffix;
+    if (fs_strncasecmp_ascii(path_sfx, suffix.c_str(), len_suffix) == 0) {
       if (len_path == len_suffix || path_sfx[-1] == '\\') {
         return 1;
       }

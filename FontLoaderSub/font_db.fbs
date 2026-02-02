@@ -1,0 +1,25 @@
+namespace fontloader;
+
+enum FontFormat : byte {
+  None = 0,
+  OTF = 1,
+  TTF = 2,
+  TTC = 3
+}
+
+table FontEntry {
+  tag:string;
+  face:string;
+  ver:string;
+  format:FontFormat = None;
+}
+
+table FontDb {
+  version:uint32 = 1;
+  num_file:uint32;
+  num_face:uint32;
+  entries:[FontEntry];
+}
+
+root_type FontDb;
+file_identifier "FTDB";

@@ -127,6 +127,13 @@
     <OutDir>$(SolutionDir)$(Configuration)\$(Platform)\</OutDir>
     <IntDir>$(Configuration)\$(Platform)\</IntDir>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <VcpkgDebugLibDir>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\debug\lib</VcpkgDebugLibDir>
+    <SimdutfLib Condition="Exists('$(VcpkgDebugLibDir)\simdutfd.lib')">simdutfd.lib</SimdutfLib>
+    <SimdutfLib Condition="'$(SimdutfLib)'==''">simdutf.lib</SimdutfLib>
+    <FlatbuffersLib Condition="Exists('$(VcpkgDebugLibDir)\flatbuffersd.lib')">flatbuffersd.lib</FlatbuffersLib>
+    <FlatbuffersLib Condition="'$(FlatbuffersLib)'==''">flatbuffers.lib</FlatbuffersLib>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -153,8 +160,8 @@
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\debug\lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;$(SimdutfLib);$(FlatbuffersLib);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\debug\lib;$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions>$(CMDLINE_DEFINE);%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -225,7 +232,7 @@
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
@@ -252,7 +259,8 @@
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <EntryPointSymbol>MyEntryPoint</EntryPointSymbol>
       <SetChecksum>true</SetChecksum>
@@ -293,6 +301,7 @@
     <ClCompile Include="ttf_parser.cpp" />
     <ClCompile Include="util.cpp" />
     <ClCompile Include="path.cpp" />
+    <ClCompile Include="utf.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ass_parser.h" />
@@ -301,6 +310,7 @@
     <ClInclude Include="exporter.h" />
     <ClInclude Include="font_loader.h" />
     <ClInclude Include="font_set.h" />
+    <ClInclude Include="font_db_generated.h" />
     <ClInclude Include="main.h" />
     <ClInclude Include="mock_config.h" />
     <ClInclude Include="res\resource.h" />
@@ -309,6 +319,10 @@
     <ClInclude Include="ttf_parser.h" />
     <ClInclude Include="util.h" />
     <ClInclude Include="path.h" />
+    <ClInclude Include="utf.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="font_db.fbs" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

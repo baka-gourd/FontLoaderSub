@@ -20,9 +20,9 @@ typedef enum {
 } FS_Format;
 
 typedef struct {
-  const wchar_t *tag;
-  const wchar_t *face;
-  const wchar_t *ver;
+  const char *tag;
+  const char *face;
+  const char *ver;
   FS_Format format;
 } FS_Index;
 
@@ -41,11 +41,11 @@ int fs_free(FS_Set *s);
 
 int fs_stat(FS_Set *s, FS_Stat *stat);
 
-int fs_add_font(FS_Set *s, const wchar_t *tag, void *buf, size_t size);
+int fs_add_font(FS_Set *s, const char *tag, void *buf, size_t size);
 
 int fs_build_index(FS_Set *s);
 
-int fs_iter_new(FS_Set *s, const wchar_t *face, FS_Iter *it);
+int fs_iter_new(FS_Set *s, const char *face, FS_Iter *it);
 
 int fs_iter_next(FS_Iter *it);
 
@@ -55,6 +55,6 @@ int fs_cache_dump(FS_Set *s, const wchar_t *path);
 
 int fs_blacklist_clear(FS_Set *s);
 
-int fs_blacklist_add(FS_Set *s, const wchar_t *path, size_t cch);
+int fs_blacklist_add(FS_Set *s, const char *path, size_t cch);
 
-int fs_blacklist_match(FS_Set *S, const wchar_t *path);
+int fs_blacklist_match(FS_Set *S, const char *path);

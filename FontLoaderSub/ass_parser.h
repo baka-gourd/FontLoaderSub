@@ -2,10 +2,10 @@
 
 #include <stddef.h>
 
-typedef int (*ASS_FontCallback)(const wchar_t *font, size_t cch, void *arg);
+typedef int (*ASS_FontCallback)(const char *font, size_t cch, void *arg);
 
 void ass_process_data(
-    const wchar_t *data,
+    const char *data,
     size_t cch,
     ASS_FontCallback cb,
     void *arg);

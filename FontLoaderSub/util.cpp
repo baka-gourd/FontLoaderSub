@@ -1,7 +1,10 @@
 #include "util.h"
+#include "util.h"
+
 #include <Windows.h>
 #include <Shlwapi.h>
 #include <intrin.h>
+#include <climits>
 
 #pragma intrinsic(__movsb)
 #pragma intrinsic(__stosb)
@@ -73,7 +76,18 @@ static int FlTestUtf8(const uint8_t *buffer, size_t size) {
   return rem == 0;
 }
 
-static wchar_t *FlTextTryDecode(
+static bool FlToInt(size_t value, int *out) {
+  if (out == NULL)
+    return false;
+  if (value > (size_t)INT_MAX) {
+    *out = 0;
+    return false;
+  }
+  *out = (int)value;
+  return true;
+}
+
+static wchar_t *FlTextTryDecodeWide(
     UINT codepage,
     const uint8_t *mstr,
     size_t bytes,
@@ -81,9 +95,12 @@ static wchar_t *FlTextTryDecode(
     allocator_t *alloc) {
   wchar_t *buf = NULL;
   int ok = 0;
+  int in_len = 0;
   do {
+    if (!FlToInt(bytes, &in_len))
+      break;
     const int r =
-        MultiByteToWideChar(codepage, 0, (const char *)mstr, bytes, NULL, 0);
+        MultiByteToWideChar(codepage, 0, (const char *)mstr, in_len, NULL, 0);
     *cch = r;
     if (r == 0)
       break;
@@ -93,7 +110,7 @@ static wchar_t *FlTextTryDecode(
       break;
 
     const int new_r =
-        MultiByteToWideChar(codepage, 0, (const char *)mstr, bytes, buf, r);
+        MultiByteToWideChar(codepage, 0, (const char *)mstr, in_len, buf, r);
     if (new_r == 0 || new_r != r)
       break;
     buf[r] = 0;
@@ -137,33 +154,93 @@ static wchar_t *FlTextDecodeUtf16(
   return buf;
 }
 
-wchar_t *FlTextDecode(
+static char *FlTextCopyUtf8(
+    const uint8_t *mstr,
+    size_t bytes,
+    size_t *len,
+    allocator_t *alloc) {
+  char *buf = (char *)alloc->alloc(NULL, bytes + 1, alloc->arg);
+  if (buf == NULL)
+    return NULL;
+  zmemcpy(buf, mstr, bytes);
+  buf[bytes] = 0;
+  if (len)
+    *len = bytes;
+  return buf;
+}
+
+static char *FlTextFromWide(
+    const wchar_t *wstr,
+    size_t cch,
+    size_t *len,
+    allocator_t *alloc) {
+  int in_len = 0;
+  if (!FlToInt(cch, &in_len))
+    return NULL;
+
+  const int needed =
+      WideCharToMultiByte(CP_UTF8, 0, wstr, in_len, NULL, 0, NULL, NULL);
+  if (needed <= 0)
+    return NULL;
+
+  char *buf = (char *)alloc->alloc(NULL, needed + 1, alloc->arg);
+  if (buf == NULL)
+    return NULL;
+
+  const int written =
+      WideCharToMultiByte(CP_UTF8, 0, wstr, in_len, buf, needed, NULL, NULL);
+  if (written <= 0) {
+    alloc->alloc(buf, 0, alloc->arg);
+    return NULL;
+  }
+  buf[written] = 0;
+  if (len)
+    *len = (size_t)written;
+  return buf;
+}
+
+char *FlTextDecode(
     const uint8_t *buf,
     size_t bytes,
-    size_t *cch,
+    size_t *len,
     allocator_t *alloc) {
-  wchar_t *res = NULL;
-  if (bytes < 4)
+  char *res = NULL;
+  if (bytes == 0)
     return res;
 
   // detect BOM
   if (buf[0] == 0xef && buf[1] == 0xbb && buf[2] == 0xbf) {
-    res = FlTextTryDecode(CP_UTF8, buf + 3, bytes - 3, cch, alloc);
+    res = FlTextCopyUtf8(buf + 3, bytes - 3, len, alloc);
   } else if (buf[0] == 0xff && buf[1] == 0xfe) {
     // UTF-16 LE
-    res = FlTextDecodeUtf16(0, buf + 2, bytes - 2, cch, alloc);
+    size_t cch = 0;
+    wchar_t *wbuf = FlTextDecodeUtf16(0, buf + 2, bytes - 2, &cch, alloc);
+    if (wbuf) {
+      res = FlTextFromWide(wbuf, cch, len, alloc);
+      alloc->alloc(wbuf, 0, alloc->arg);
+    }
   } else if (buf[0] == 0xfe && buf[1] == 0xff) {
     // UTF-16 BE
-    res = FlTextDecodeUtf16(1, buf + 2, bytes - 2, cch, alloc);
+    size_t cch = 0;
+    wchar_t *wbuf = FlTextDecodeUtf16(1, buf + 2, bytes - 2, &cch, alloc);
+    if (wbuf) {
+      res = FlTextFromWide(wbuf, cch, len, alloc);
+      alloc->alloc(wbuf, 0, alloc->arg);
+    }
   }
 
   // detect UTF-8
   if (!res && FlTestUtf8(buf, bytes)) {
-    res = FlTextTryDecode(CP_UTF8, buf, bytes, cch, alloc);
+    res = FlTextCopyUtf8(buf, bytes, len, alloc);
   }
   // final resort
   if (!res) {
-    res = FlTextTryDecode(CP_ACP, buf, bytes, cch, alloc);
+    size_t cch = 0;
+    wchar_t *wbuf = FlTextTryDecodeWide(CP_ACP, buf, bytes, &cch, alloc);
+    if (wbuf) {
+      res = FlTextFromWide(wbuf, cch, len, alloc);
+      alloc->alloc(wbuf, 0, alloc->arg);
+    }
   }
   return res;
 }

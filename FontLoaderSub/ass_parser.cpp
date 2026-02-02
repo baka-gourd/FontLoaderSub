@@ -1,5 +1,4 @@
 #include "ass_parser.h"
-#include "ass_string.h"
 
 typedef enum {
   PST_UNKNOWN = 0,
@@ -16,26 +15,98 @@ typedef enum {
 } ASS_TrackType;
 
 typedef struct {
-  ASS_Range Text;
+  const char *begin;
+  const char *end;
+} ASS_U8Range;
+
+typedef struct {
+  ASS_U8Range Text;
 } ASS_Event;
 
 typedef struct {
   ASS_ParserState state;
   ASS_TrackType track_type;
-  ASS_Range format_string;
+  ASS_U8Range format_string;
 
   ASS_FontCallback callback;
   void *cb_arg;
 } ASS_Track;
 
-static void fire_font_cb(ASS_Track *track, ASS_Range *font) {
+static int ass8_is_space(int ch) {
+  return ch == ' ' || ch == '\t';
+}
+
+static void ass8_trim(ASS_U8Range *r) {
+  if (!r || !r->begin || !r->end || r->begin == r->end)
+    return;
+  for (; r->begin != r->end && ass8_is_space(*r->begin); r->begin++) {
+    // nop;
+  }
+  if (r->begin == r->end)
+    return;
+  for (; ass8_is_space(r->end[-1]); r->end--) {
+    // nop;
+  }
+}
+
+static const char *ass8_skip_spaces(const char *p, const char *end) {
+  for (; p != end && ass8_is_space(*p); p++) {
+    // nop
+  }
+  return p;
+}
+
+static int ass8_is_eol(int ch) {
+  return ch == '\r' || ch == '\n';
+}
+
+static int ass8_strncmp(const char *s1, const char *s2, size_t cch) {
+  char a, b;
+  const char *last = s2 + cch;
+
+  do {
+    a = *s1++;
+    b = *s2++;
+  } while (s2 != last && a && a == b);
+
+  return a - b;
+}
+
+static char ass8_to_lower(char ch) {
+  if ('A' <= ch && ch <= 'Z')
+    return ch - 'A' + 'a';
+  return ch;
+}
+
+static int ass8_strncasecmp(const char *s1, const char *s2, size_t cch) {
+  char a, b;
+  const char *last = s2 + cch;
+
+  do {
+    a = ass8_to_lower(*s1++);
+    b = ass8_to_lower(*s2++);
+  } while (s2 != last && a && a == b);
+
+  return a - b;
+}
+
+static const char *ass8_strnchr(const char *s, char ch, size_t cch) {
+  const char *last = s + cch;
+
+  for (; s != last && *s != ch; s++) {
+    // nop
+  }
+  return s == last ? NULL : s;
+}
+
+static void fire_font_cb(ASS_Track *track, ASS_U8Range *font) {
   if (track->callback) {
-    const wchar_t *begin = ass_skip_spaces(font->begin, font->end);
+    const char *begin = ass8_skip_spaces(font->begin, font->end);
     track->callback(begin, font->end - begin, track->cb_arg);
   }
 }
 
-static int next_tok(ASS_Range *input, ASS_Range *tok) {
+static int next_tok(ASS_U8Range *input, ASS_U8Range *tok) {
   if (input->begin == input->end) {
     return 0;
   }
@@ -49,18 +120,18 @@ static int next_tok(ASS_Range *input, ASS_Range *tok) {
   } else {
     input->begin = tok->end;
   }
-  ass_trim(tok);
+  ass8_trim(tok);
 
   return 1;
 }
 
 static int test_tag(
-    const wchar_t *p,
-    const wchar_t *end,
-    const wchar_t *tag,
+    const char *p,
+    const char *end,
+    const char *tag,
     size_t len,
-    ASS_Range *arg) {
-  if (end >= p + len && ass_strncmp(p, tag, len) == 0) {
+    ASS_U8Range *arg) {
+  if (end >= p + len && ass8_strncmp(p, tag, len) == 0) {
     arg->begin = p + len;
     arg->end = end;
     return 1;
@@ -68,9 +139,9 @@ static int test_tag(
   return 0;
 }
 
-static const wchar_t *
-parse_tags(ASS_Track *track, const wchar_t *p, const wchar_t *end, int nested) {
-  const wchar_t *q;
+static const char *
+parse_tags(ASS_Track *track, const char *p, const char *end, int nested) {
+  const char *q;
   for (; p != end; p = q) {
     while (p != end && *p != '\\')
       ++p;
@@ -78,7 +149,7 @@ parse_tags(ASS_Track *track, const wchar_t *p, const wchar_t *end, int nested) {
       break;
     ++p;
     if (p != end)
-      p = ass_skip_spaces(p, end);
+      p = ass8_skip_spaces(p, end);
 
     q = p;
     while (q != end && *q != '(' && *q != '\\')
@@ -86,16 +157,16 @@ parse_tags(ASS_Track *track, const wchar_t *p, const wchar_t *end, int nested) {
     if (q == p)
       continue;
 
-    const wchar_t *name_end = q;
+    const char *name_end = q;
 
     // Split parenthesized arguments
-    ASS_Range first_arg = {NULL, NULL};
+    ASS_U8Range first_arg = {NULL, NULL};
     if (q != end && *q == '(') {
       ++q;
       while (1) {
         if (q != end)
-          q = ass_skip_spaces(q, end);
-        const wchar_t *r = q;
+          q = ass8_skip_spaces(q, end);
+        const char *r = q;
         while (r != end && *r != ',' && *r != '\\' && *r != ')')
           ++r;
 
@@ -118,9 +189,9 @@ parse_tags(ASS_Track *track, const wchar_t *p, const wchar_t *end, int nested) {
       }
     }
 
-    ASS_Range arg;
-    if (test_tag(p, name_end, L"fn", 2, &arg)) {
-      if (ass_strncmp(L"0", arg.begin, arg.end - arg.begin) == 0) {
+    ASS_U8Range arg;
+    if (test_tag(p, name_end, "fn", 2, &arg)) {
+      if (ass8_strncmp("0", arg.begin, arg.end - arg.begin) == 0) {
         // restore?
       } else {
         if (first_arg.begin)
@@ -138,22 +209,21 @@ static void parse_events(ASS_Track *track, ASS_Event *event) {
     return;
   }
 
-  const wchar_t *p = event->Text.begin;
-  const wchar_t *ep = event->Text.end;
-  const wchar_t *q;
+  const char *p = event->Text.begin;
+  const char *ep = event->Text.end;
+  const char *q;
 
-  while ((p = ass_strnchr(p, '{', ep - p)) != NULL &&
-         (q = ass_strnchr(p, '}', ep - p)) != NULL) {
+  while ((p = ass8_strnchr(p, '{', ep - p)) != NULL &&
+         (q = ass8_strnchr(p, '}', ep - p)) != NULL) {
     p = parse_tags(track, p, q, 0);
     ++p;
   }
 }
 
-static void
-process_event_tail(ASS_Track *track, ASS_Range *line, int n_ignored) {
+static void process_event_tail(ASS_Track *track, ASS_U8Range *line, int n_ignored) {
   int i;
-  ASS_Range tok[1], tag[1], format[1];
-  ASS_Event event = {0};
+  ASS_U8Range tok[1], tag[1], format[1];
+  ASS_Event event = {};
 
   for (i = 0; i < n_ignored; i++) {
     next_tok(line, tok);
@@ -173,7 +243,7 @@ process_event_tail(ASS_Track *track, ASS_Range *line, int n_ignored) {
     while (next_tok(format, tag)) {
       const int r = next_tok(line, tok);
       if (r && tag->end - tag->begin == 4 &&
-          ass_strncasecmp(tag->begin, L"text", 4) == 0) {
+          ass8_strncasecmp(tag->begin, "text", 4) == 0) {
         // till the end
         tok->end = line->end;
         event.Text = *tok;
@@ -184,9 +254,8 @@ process_event_tail(ASS_Track *track, ASS_Range *line, int n_ignored) {
   parse_events(track, &event);
 }
 
-static void
-process_styles(ASS_Track *track, const wchar_t *begin, const wchar_t *end) {
-  ASS_Range line[1], tok[1], tag[1], format[1];
+static void process_styles(ASS_Track *track, const char *begin, const char *end) {
+  ASS_U8Range line[1], tok[1], tag[1], format[1];
   line->begin = begin;
   line->end = end;
 
@@ -203,7 +272,7 @@ process_styles(ASS_Track *track, const wchar_t *begin, const wchar_t *end) {
     while (next_tok(format, tag)) {
       const int r = next_tok(line, tok);
       if (r && tag->end - tag->begin == 8 &&
-          ass_strncasecmp(tag->begin, L"fontname", 8) == 0) {
+          ass8_strncasecmp(tag->begin, "fontname", 8) == 0) {
         fire_font_cb(track, tok);
       }
     }
@@ -212,42 +281,41 @@ process_styles(ASS_Track *track, const wchar_t *begin, const wchar_t *end) {
 
 static void process_styles_line(
     ASS_Track *track,
-    const wchar_t *begin,
-    const wchar_t *end) {
-  if (!ass_strncmp(begin, L"Format:", 7)) {
+    const char *begin,
+    const char *end) {
+  if (!ass8_strncmp(begin, "Format:", 7)) {
     track->format_string.begin = begin + 7;
     track->format_string.end = end;
-    ass_trim(&track->format_string);
-  } else if (!ass_strncmp(begin, L"Style:", 6)) {
-    process_styles(track, ass_skip_spaces(begin + 6, end), end);
+    ass8_trim(&track->format_string);
+  } else if (!ass8_strncmp(begin, "Style:", 6)) {
+    process_styles(track, ass8_skip_spaces(begin + 6, end), end);
   }
 }
 
 static void process_events_line(
     ASS_Track *track,
-    const wchar_t *begin,
-    const wchar_t *end) {
-  if (!ass_strncmp(begin, L"Format:", 7)) {
-    ASS_Range fmt_str = {begin + 7, end};
+    const char *begin,
+    const char *end) {
+  if (!ass8_strncmp(begin, "Format:", 7)) {
+    ASS_U8Range fmt_str = {begin + 7, end};
     track->format_string = fmt_str;
-    ass_trim(&track->format_string);
-  } else if (!ass_strncmp(begin, L"Dialogue:", 9)) {
-    ASS_Range range = {ass_skip_spaces(begin + 9, end), end};
+    ass8_trim(&track->format_string);
+  } else if (!ass8_strncmp(begin, "Dialogue:", 9)) {
+    ASS_U8Range range = {ass8_skip_spaces(begin + 9, end), end};
     process_event_tail(track, &range, 0);
   }
 }
 
-static void
-process_line(ASS_Track *track, const wchar_t *begin, const wchar_t *end) {
+static void process_line(ASS_Track *track, const char *begin, const char *end) {
   int is_content = 0;
 
-  if (!ass_strncasecmp(begin, L"[v4 styles]", 11)) {
+  if (!ass8_strncasecmp(begin, "[v4 styles]", 11)) {
     track->state = PST_STYLES;
     track->track_type = TRACK_TYPE_SSA;
-  } else if (!ass_strncasecmp(begin, L"[v4+ styles]", 12)) {
+  } else if (!ass8_strncasecmp(begin, "[v4+ styles]", 12)) {
     track->state = PST_STYLES;
     track->track_type = TRACK_TYPE_ASS;
-  } else if (!ass_strncasecmp(begin, L"[events]", 8)) {
+  } else if (!ass8_strncasecmp(begin, "[events]", 8)) {
     track->state = PST_EVENTS;
   } else if (begin[0] == '[') {
     track->state = PST_UNKNOWN;
@@ -273,22 +341,22 @@ process_line(ASS_Track *track, const wchar_t *begin, const wchar_t *end) {
 }
 
 void ass_process_data(
-    const wchar_t *data,
+    const char *data,
     size_t cch,
     ASS_FontCallback cb,
     void *arg) {
   ASS_Track track = {};
   track.callback = cb;
   track.cb_arg = arg;
-  const wchar_t *p = data;
-  const wchar_t *eos = data + cch;
+  const char *p = data;
+  const char *eos = data + cch;
   while (p != eos) {
     // skip blank lines
-    while (p != eos && ass_is_eol(*p))
+    while (p != eos && ass8_is_eol(*p))
       ++p;
     // find end of the line
-    const wchar_t *q = p;
-    while (q != eos && !ass_is_eol(*q))
+    const char *q = p;
+    while (q != eos && !ass8_is_eol(*q))
       ++q;
 
     process_line(&track, p, q);
