@@ -147,7 +147,7 @@ int ShortcutSendTo(FL_ShortCtx *c, ShortcutMode mode) {
   str_db_seek(&c->tmp, 0);
 
   do {
-    hr = SHGetKnownFolderPath(&FOLDERID_SendTo, 0, NULL, &sendto_path);
+    hr = SHGetKnownFolderPath(FOLDERID_SendTo, 0, NULL, &sendto_path);
     if (FAILED(hr))
       break;
     if (!str_db_push_u16_le(&c->tmp, sendto_path, 0) ||
@@ -176,15 +176,15 @@ int ShortcutSendTo(FL_ShortCtx *c, ShortcutMode mode) {
     } else if (mode == SHORTCUT_MODE_CREATE) {
       IShellLink *psl;
       hr = CoCreateInstance(
-          &CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLink,
+          CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLink,
           (void **)&psl);
       if (SUCCEEDED(hr)) {
         // set shortcut target
         hr = psl->lpVtbl->SetPath(psl, c->path);
         if (SUCCEEDED(hr)) {
           IPersistFile *ppf;
-          hr = psl->lpVtbl->QueryInterface(
-              psl, &IID_IPersistFile, (void **)&ppf);
+          hr =
+              psl->lpVtbl->QueryInterface(psl, IID_IPersistFile, (void **)&ppf);
           if (SUCCEEDED(hr)) {
             hr = ppf->lpVtbl->Save(ppf, path, TRUE);
             if (SUCCEEDED(hr)) {
@@ -223,8 +223,7 @@ static void ShortcutRefresh(FL_ShortCtx *c, int error) {
 }
 
 static const ShortcutTogglers kShortcutToggler[FL_SHORTCUT_MAX] = {
-    [FL_SHORTCUT_SENDTO] = ShortcutSendTo,
-    [FL_SHORTCUT_CONTEXT] = ShortcutExplorerDirectoryBackground};
+    ShortcutSendTo, ShortcutExplorerDirectoryBackground};
 
 static HRESULT CALLBACK DlgShortcutProc(
     HWND hWnd,

@@ -43,11 +43,9 @@ typedef struct {
 #define kTagError L"\t!!"
 #define kTagErrorLen (3)
 
-static const WCHAR kFsFmtTag[FS_FmtMax][4] = {  // format hack
-    [FS_FmtNone] = L"",
-    [FS_FmtOTF] = L"otf",
-    [FS_FmtTTF] = L"ttf",
-    [FS_FmtTTC] = L"ttc"};
+static const WCHAR kFsFmtTag[FS_FmtMax][4] =
+    {  // format hack
+        L"", L"otf", L"ttf", L"ttc"};
 
 static void fs_format_tag_to_str(FS_Format fmt, WCHAR s[4]);
 
@@ -165,8 +163,11 @@ int fs_add_font(FS_Set *s, const wchar_t *tag, void *buf, size_t size) {
       break;
 
     pos_db = str_db_tell(db);
-    ctx = (FS_ParseCtx){.set = s, .pos_ver = pos_db, .pos_face = pos_db};
-    r = ttc_parse(buf, size, fs_parser_name_cb, &ctx);
+    ctx = {};
+    ctx.set = s;
+    ctx.pos_ver = pos_db;
+    ctx.pos_face = pos_db;
+    r = ttc_parse((const uint8_t *)buf, size, fs_parser_name_cb, &ctx);
     if (r == FL_OK && ctx.count_face > 0) {
       ok = 1;
       break;
@@ -181,8 +182,11 @@ int fs_add_font(FS_Set *s, const wchar_t *tag, void *buf, size_t size) {
       break;
 
     pos_db = str_db_tell(db);
-    ctx = (FS_ParseCtx){.set = s, .pos_ver = pos_db, .pos_face = pos_db};
-    r = otf_parse(buf, size, fs_parser_name_cb, &ctx);
+    ctx = {};
+    ctx.set = s;
+    ctx.pos_ver = pos_db;
+    ctx.pos_face = pos_db;
+    r = otf_parse((const uint8_t *)buf, size, fs_parser_name_cb, &ctx);
     if (r == FL_OK && ctx.count_face > 0) {
       ok = 1;
       break;
@@ -220,7 +224,8 @@ int fs_add_font(FS_Set *s, const wchar_t *tag, void *buf, size_t size) {
 
 static int fs_idx_comp(const void *pa, const void *pb, void *arg) {
   // FS_Set *s = arg;
-  const FS_Index *a = pa, *b = pb;
+  const FS_Index *a = (const FS_Index *)pa;
+  const FS_Index *b = (const FS_Index *)pb;
 
   // first, compare the name
   int cmp = FlStrCmpIW(a->face, b->face);
@@ -255,8 +260,8 @@ static void fs_format_tag_to_str(FS_Format fmt, WCHAR s[4]) {
 }
 
 static void fs_debug_write_line(HANDLE f, const WCHAR *line) {
-  SIZE_T nb = lstrlen(line) * sizeof line[0];
-  SIZE_T out = 0;
+  DWORD nb = lstrlen(line) * sizeof line[0];
+  DWORD out = 0;
   WriteFile(f, line, nb, &out, NULL);
 }
 
@@ -290,7 +295,7 @@ int fs_build_index(FS_Set *s) {
   }
 
   // for checking only
-  FS_Stat stat = {.num_face = 0, .num_file = 0};
+  FS_Stat stat = {};
 
   int err = 0;
   int has_filename = 0;
@@ -300,7 +305,7 @@ int fs_build_index(FS_Set *s) {
   while (!err && (line = str_db_next(&s->db, &pos)) != NULL) {
     if (line[0] == 0) {
       // empty line
-      last_idx = (FS_Index){0};
+      last_idx = {};
       has_filename = 0;
     } else if (ass_strncmp(line, kTagVersion, kTagVersionLen) == 0) {
       // update version
@@ -378,8 +383,10 @@ int fs_iter_new(FS_Set *s, const wchar_t *face, FS_Iter *it) {
     if (m == s->stat.num_face) {
       break;
     }
-    *it =
-        (FS_Iter){.set = s, .query_id = m, .index_id = m, .info = s->index[m]};
+    it->set = s;
+    it->query_id = m;
+    it->index_id = m;
+    it->info = s->index[m];
     return 1;
   } while ((0));
 
@@ -464,7 +471,7 @@ int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
     }
 
     r = FL_UNRECOGNIZED;
-    FS_CacheHeader *head = map.data;
+    FS_CacheHeader *head = (FS_CacheHeader *)map.data;
     if (head->magic != KFontDbMagic)
       break;
     if (head->size != map.size)
@@ -513,10 +520,10 @@ int fs_cache_dump(FS_Set *s, const wchar_t *path) {
     if (h == INVALID_HANDLE_VALUE)
       break;
     const wchar_t *buf = str_db_get(&s->db, 0);
-    FS_CacheHeader head = {
-        .magic = KFontDbMagic,
-        .stat = s->stat,
-        .size = sizeof head + str_db_tell(&s->db) * sizeof buf[0]};
+    FS_CacheHeader head = {};
+    head.magic = KFontDbMagic;
+    head.stat = s->stat;
+    head.size = sizeof head + str_db_tell(&s->db) * sizeof buf[0];
 
     DWORD dw_out;
     if (!WriteFile(h, &head, sizeof head, &dw_out, NULL))

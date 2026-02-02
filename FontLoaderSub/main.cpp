@@ -229,7 +229,7 @@ static int AppBuildLog(FL_AppCtx *c) {
   str_db_t *log = &c->log;
 
   str_db_seek(log, 0);
-  FL_FontMatch *data = loaded->data;
+  FL_FontMatch *data = (FL_FontMatch *)loaded->data;
 
   for (size_t i = 0; i != loaded->n; i++) {
     const wchar_t *tag;
@@ -599,44 +599,54 @@ static HRESULT CALLBACK DlgDoneProc(
   return S_OK;
 }
 
-static const TASKDIALOGCONFIG kDlgWorkTemplate = {
-    .cbSize = sizeof kDlgWorkTemplate,
-    .pszWindowTitle = MAKEINTRESOURCE(IDS_APP_NAME_VER),
-    .dwCommonButtons = TDCBF_CANCEL_BUTTON,
-    .dwFlags = TDF_SHOW_MARQUEE_PROGRESS_BAR | TDF_CALLBACK_TIMER |
-               TDF_SIZE_TO_CONTENT,
-    .pszMainInstruction = L"",
-    .pfCallback = DlgWorkProc,
-};
-
 static const TASKDIALOG_BUTTON kDlgDoneButtons[] = {
     {ID_BTN_MENU, MAKEINTRESOURCE(IDS_MENU)}};
 
-static const TASKDIALOGCONFIG kDlgDoneTemplate = {
-    .cbSize = sizeof kDlgDoneTemplate,
-    .pszWindowTitle = MAKEINTRESOURCE(IDS_APP_NAME_VER),
-    .dwCommonButtons = TDCBF_CLOSE_BUTTON | TDCBF_OK_BUTTON,
-    .pszMainInstruction = MAKEINTRESOURCE(IDS_WORK_DONE),
-    .dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_ENABLE_HYPERLINKS |
-               TDF_SIZE_TO_CONTENT,
-    .pszFooterIcon = TD_SHIELD_ICON,
-    .pszFooter = L"GPLv2: <A>github.com/yzwduck/FontLoaderSub</A>",
-    .pfCallback = DlgDoneProc,
-    .cButtons = _countof(kDlgDoneButtons),
-    .pButtons = kDlgDoneButtons,
-    .nDefaultButton = IDOK,
-};
+static TASKDIALOGCONFIG MakeDlgWorkTemplate() {
+  TASKDIALOGCONFIG cfg = {};
+  cfg.cbSize = sizeof cfg;
+  cfg.pszWindowTitle = MAKEINTRESOURCE(IDS_APP_NAME_VER);
+  cfg.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+  cfg.dwFlags =
+      TDF_SHOW_MARQUEE_PROGRESS_BAR | TDF_CALLBACK_TIMER | TDF_SIZE_TO_CONTENT;
+  cfg.pszMainInstruction = L"";
+  cfg.pfCallback = DlgWorkProc;
+  return cfg;
+}
 
-static const TASKDIALOGCONFIG kDlgHelpTemplate = {
-    .cbSize = sizeof kDlgHelpTemplate,
-    .pszWindowTitle = MAKEINTRESOURCE(IDS_APP_NAME_VER),
-    .pszMainIcon = TD_INFORMATION_ICON,
-    .pszMainInstruction = MAKEINTRESOURCE(IDS_HELP),
-    .pszContent = MAKEINTRESOURCE(IDS_USAGE),
-    .dwCommonButtons = TDCBF_CLOSE_BUTTON,
-    .dwFlags = TDF_ENABLE_HYPERLINKS | TDF_ALLOW_DIALOG_CANCELLATION,
-    .pfCallback = DlgHelpProc,
-};
+static TASKDIALOGCONFIG MakeDlgDoneTemplate() {
+  TASKDIALOGCONFIG cfg = {};
+  cfg.cbSize = sizeof cfg;
+  cfg.pszWindowTitle = MAKEINTRESOURCE(IDS_APP_NAME_VER);
+  cfg.dwCommonButtons = TDCBF_CLOSE_BUTTON | TDCBF_OK_BUTTON;
+  cfg.pszMainInstruction = MAKEINTRESOURCE(IDS_WORK_DONE);
+  cfg.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_ENABLE_HYPERLINKS |
+                TDF_SIZE_TO_CONTENT;
+  cfg.pszFooterIcon = TD_SHIELD_ICON;
+  cfg.pszFooter = L"GPLv2: <A>github.com/yzwduck/FontLoaderSub</A>";
+  cfg.pfCallback = DlgDoneProc;
+  cfg.cButtons = (UINT)(sizeof(kDlgDoneButtons) / sizeof(kDlgDoneButtons[0]));
+  cfg.pButtons = kDlgDoneButtons;
+  cfg.nDefaultButton = IDOK;
+  return cfg;
+}
+
+static TASKDIALOGCONFIG MakeDlgHelpTemplate() {
+  TASKDIALOGCONFIG cfg = {};
+  cfg.cbSize = sizeof cfg;
+  cfg.pszWindowTitle = MAKEINTRESOURCE(IDS_APP_NAME_VER);
+  cfg.pszMainIcon = TD_INFORMATION_ICON;
+  cfg.pszMainInstruction = MAKEINTRESOURCE(IDS_HELP);
+  cfg.pszContent = MAKEINTRESOURCE(IDS_USAGE);
+  cfg.dwCommonButtons = TDCBF_CLOSE_BUTTON;
+  cfg.dwFlags = TDF_ENABLE_HYPERLINKS | TDF_ALLOW_DIALOG_CANCELLATION;
+  cfg.pfCallback = DlgHelpProc;
+  return cfg;
+}
+
+static const TASKDIALOGCONFIG kDlgWorkTemplate = MakeDlgWorkTemplate();
+static const TASKDIALOGCONFIG kDlgDoneTemplate = MakeDlgDoneTemplate();
+static const TASKDIALOGCONFIG kDlgHelpTemplate = MakeDlgHelpTemplate();
 
 static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->hInst = hInst;
@@ -709,7 +719,7 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
     return 0;
 
   if (SUCCEEDED(CoCreateInstance(
-          &CLSID_TaskbarList, NULL, CLSCTX_INPROC_SERVER, &IID_ITaskbarList3,
+          CLSID_TaskbarList, NULL, CLSCTX_INPROC_SERVER, IID_ITaskbarList3,
           (void **)&c->taskbar_list3))) {
     if (FAILED(c->taskbar_list3->lpVtbl->HrInit(c->taskbar_list3))) {
       c->taskbar_list3->lpVtbl->Release(c->taskbar_list3);
@@ -765,7 +775,9 @@ int WINAPI _tWinMain(
   }
 
   HANDLE heap = HeapCreate(0, 0, 0);
-  allocator_t alloc = {.alloc = mem_realloc, .arg = heap};
+  allocator_t alloc = {};
+  alloc.alloc = mem_realloc;
+  alloc.arg = heap;
   FL_AppCtx *ctx = &g_app;
   if (ctx == NULL || !AppInit(ctx, hInstance, &alloc)) {
     TaskDialog(
@@ -783,7 +795,7 @@ int WINAPI _tWinMain(
   return 0;
 }
 
-extern IMAGE_DOS_HEADER __ImageBase;
+extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 void MyEntryPoint() {
   UINT uRetCode;

@@ -34,43 +34,43 @@
     </Manifest>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.c">
+    <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="ass_parser.c">
+    <ClCompile Include="ass_parser.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="util.c">
+    <ClCompile Include="util.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="ass_string.c">
+    <ClCompile Include="ass_string.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="ttf_parser.c">
+    <ClCompile Include="ttf_parser.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="cstl.c">
+    <ClCompile Include="cstl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="font_set.c">
+    <ClCompile Include="font_set.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="tim_sort.c">
+    <ClCompile Include="tim_sort.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="font_loader.c">
+    <ClCompile Include="font_loader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="path.c">
+    <ClCompile Include="path.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="test.c">
+    <ClCompile Include="test.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="shortcut.c">
+    <ClCompile Include="shortcut.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="exporter.c">
+    <ClCompile Include="exporter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

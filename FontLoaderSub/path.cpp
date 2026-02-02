@@ -107,7 +107,9 @@ int FlWalkDir(
     FL_FileWalkCb callback,
     void *arg) {
   int r;
-  FL_WalkDirCtx ctx = {.callback = callback, .arg = arg};
+  FL_WalkDirCtx ctx = {};
+  ctx.callback = callback;
+  ctx.arg = arg;
   str_db_init(&ctx.path, alloc, 0, 0);
 
   do {
@@ -126,7 +128,10 @@ int FlWalkDir(
 
 int FlWalkDirStr(str_db_t *path, FL_FileWalkCb callback, void *arg) {
   // assume path->pad_len == 0
-  FL_WalkDirCtx ctx = {.callback = callback, .arg = arg, .path = *path};
+  FL_WalkDirCtx ctx = {};
+  ctx.callback = callback;
+  ctx.arg = arg;
+  ctx.path = *path;
   const int r = WalkDirDfs(&ctx);
   *path = ctx.path;
   return r;

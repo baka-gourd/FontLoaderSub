@@ -39,7 +39,8 @@ static int next_tok(ASS_Range *input, ASS_Range *tok) {
   if (input->begin == input->end) {
     return 0;
   }
-  *tok = (ASS_Range){.begin = input->begin, .end = input->begin};
+  tok->begin = input->begin;
+  tok->end = input->begin;
   while (tok->end != input->end && tok->end[0] != ',') {
     ++tok->end;
   }
@@ -60,7 +61,8 @@ static int test_tag(
     size_t len,
     ASS_Range *arg) {
   if (end >= p + len && ass_strncmp(p, tag, len) == 0) {
-    *arg = (ASS_Range){.begin = p + len, .end = end};
+    arg->begin = p + len;
+    arg->end = end;
     return 1;
   }
   return 0;
@@ -105,7 +107,8 @@ parse_tags(ASS_Track *track, const wchar_t *p, const wchar_t *end, int nested) {
             ++r;
           // push_arg(args, &argc, q, r);
           if (first_arg.begin == NULL) {
-            first_arg = (ASS_Range){q, r};
+            first_arg.begin = q;
+            first_arg.end = r;
           }
           q = r;
           if (q != end)
@@ -122,7 +125,7 @@ parse_tags(ASS_Track *track, const wchar_t *p, const wchar_t *end, int nested) {
       } else {
         if (first_arg.begin)
           fire_font_cb(track, &first_arg);
-        else 
+        else
           fire_font_cb(track, &arg);
       }
     }
@@ -184,7 +187,8 @@ process_event_tail(ASS_Track *track, ASS_Range *line, int n_ignored) {
 static void
 process_styles(ASS_Track *track, const wchar_t *begin, const wchar_t *end) {
   ASS_Range line[1], tok[1], tag[1], format[1];
-  *line = (ASS_Range){.begin = begin, .end = end};
+  line->begin = begin;
+  line->end = end;
 
   *format = track->format_string;
   if (format->begin == format->end) {
@@ -211,7 +215,8 @@ static void process_styles_line(
     const wchar_t *begin,
     const wchar_t *end) {
   if (!ass_strncmp(begin, L"Format:", 7)) {
-    track->format_string = (ASS_Range){.begin = begin + 7, .end = end};
+    track->format_string.begin = begin + 7;
+    track->format_string.end = end;
     ass_trim(&track->format_string);
   } else if (!ass_strncmp(begin, L"Style:", 6)) {
     process_styles(track, ass_skip_spaces(begin + 6, end), end);
@@ -223,11 +228,11 @@ static void process_events_line(
     const wchar_t *begin,
     const wchar_t *end) {
   if (!ass_strncmp(begin, L"Format:", 7)) {
-    const ASS_Range fmt_str = {.begin = begin + 7, .end = end};
+    ASS_Range fmt_str = {begin + 7, end};
     track->format_string = fmt_str;
     ass_trim(&track->format_string);
   } else if (!ass_strncmp(begin, L"Dialogue:", 9)) {
-    ASS_Range range = {.begin = ass_skip_spaces(begin + 9, end), .end = end};
+    ASS_Range range = {ass_skip_spaces(begin + 9, end), end};
     process_event_tail(track, &range, 0);
   }
 }
@@ -251,7 +256,8 @@ process_line(ASS_Track *track, const wchar_t *begin, const wchar_t *end) {
   }
 
   if (!is_content) {
-    track->format_string = (ASS_Range){.begin = NULL, .end = NULL};
+    track->format_string.begin = NULL;
+    track->format_string.end = NULL;
   } else {
     switch (track->state) {
     case PST_STYLES:
@@ -271,7 +277,9 @@ void ass_process_data(
     size_t cch,
     ASS_FontCallback cb,
     void *arg) {
-  ASS_Track track = {.callback = cb, .cb_arg = arg};
+  ASS_Track track = {};
+  track.callback = cb;
+  track.cb_arg = arg;
   const wchar_t *p = data;
   const wchar_t *eos = data + cch;
   while (p != eos) {

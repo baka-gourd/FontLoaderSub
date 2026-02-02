@@ -23,9 +23,8 @@ static ULONG STDMETHODCALLTYPE LFEC_AddRef(IEnumShellItems *This);
 static HRESULT STDMETHODCALLTYPE
 LFEC_QueryInterface(IEnumShellItems *This, REFIID riid, void **out) {
   LoadedFontEnumCtx *c = (LoadedFontEnumCtx *)This;
-  REFIID unk = &IID_IUnknown;
-  REFIID esi = &IID_IEnumShellItems;
-  if (IsEqualGUID(riid, unk) || IsEqualGUID(riid, esi)) {
+  if (IsEqualGUID(riid, IID_IUnknown) ||
+      IsEqualGUID(riid, IID_IEnumShellItems)) {
     LFEC_AddRef(This);
     *out = (void *)c;
     return S_OK;
@@ -58,7 +57,7 @@ static HRESULT LFEC_NextOne(LoadedFontEnumCtx *c, IShellItem **item) {
     if (m->filename != NULL && (m->flag & FL_LOAD_DUP) == 0) {
       if (item != NULL) {
         return SHCreateItemFromRelativeName(
-            c->root, m->filename, NULL, &IID_IShellItem, (void **)item);
+            c->root, m->filename, NULL, IID_IShellItem, (void **)item);
       } else {
         return S_OK;  // simulate create success
       }
@@ -122,13 +121,8 @@ LFEC_Clone(IEnumShellItems *This, IEnumShellItems **ppenum) {
 }
 
 static const IEnumShellItemsVtbl kLFEC_Verb = {
-    .QueryInterface = LFEC_QueryInterface,
-    .AddRef = LFEC_AddRef,
-    .Release = LFEC_Release,
-    .Next = LFEC_Next,
-    .Skip = LFEC_Skip,
-    .Reset = LFEC_Reset,
-    .Clone = LFEC_Clone,
+    LFEC_QueryInterface, LFEC_AddRef, LFEC_Release, LFEC_Next,
+    LFEC_Skip,           LFEC_Reset,  LFEC_Clone,
 };
 
 static HRESULT LFEC_Create(FL_AppCtx *app, IEnumShellItems **ppenum) {
@@ -152,7 +146,7 @@ static HRESULT LFEC_Create(FL_AppCtx *app, IEnumShellItems **ppenum) {
   }
   IShellItem *dir_root = NULL;
   HRESULT hr = SHCreateItemFromParsingName(
-      font_path, NULL, &IID_IShellItem, (void **)&dir_root);
+      font_path, NULL, IID_IShellItem, (void **)&dir_root);
   if (font_path_hack) {
     font_path[0] = font_path_hack;
   }
@@ -187,7 +181,7 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
   do {
     // prepare "Select folder" dialog
     hr = CoCreateInstance(
-        &CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, &IID_IFileOpenDialog,
+        CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog,
         (void **)&pfd);
     if (FAILED(hr))
       break;
@@ -217,7 +211,7 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
     if (FAILED(hr))
       break;
     hr = CoCreateInstance(
-        &CLSID_FileOperation, NULL, CLSCTX_ALL, &IID_IFileOperation,
+        CLSID_FileOperation, NULL, CLSCTX_ALL, IID_IFileOperation,
         (void **)&file_opt);
     if (FAILED(hr))
       break;

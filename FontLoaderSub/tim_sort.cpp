@@ -78,11 +78,12 @@ void tim_sort(
   if (count < 2) {
     return;
   }
-  Sort_Ctx ctx = {.data = ptr,
-                  .temp = alloc->alloc(NULL, count * size, alloc->arg),
-                  .size = size,
-                  .comp = comp,
-                  .arg = arg};
+  Sort_Ctx ctx = {};
+  ctx.data = (uint8_t *)ptr;
+  ctx.temp = (uint8_t *)alloc->alloc(NULL, count * size, alloc->arg);
+  ctx.size = size;
+  ctx.comp = comp;
+  ctx.arg = arg;
   if (ctx.temp == NULL) {
     // fallback
     select_sort(0, count, &ctx);

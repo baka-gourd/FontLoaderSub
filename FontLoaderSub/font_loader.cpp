@@ -83,7 +83,7 @@ static int fl_check_cancel(FL_LoaderCtx *c) {
 }
 
 static int fl_sub_font_callback(const wchar_t *font, size_t cch, void *arg) {
-  FL_LoaderCtx *c = arg;
+  FL_LoaderCtx *c = (FL_LoaderCtx *)arg;
   if (cch != 0) {
     if (font[0] == '@') {
       // skip prefix '@'
@@ -112,7 +112,7 @@ static int fl_sub_font_callback(const wchar_t *font, size_t cch, void *arg) {
 
 static int
 fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
-  FL_LoaderCtx *c = arg;
+  FL_LoaderCtx *c = (FL_LoaderCtx *)arg;
   // NOTE: don't name this variable `r`.
   // Some Windows/CRT environments may macro-substitute short identifiers,
   // which breaks assignment and triggers C2166/C2106 on MSVC.
@@ -147,7 +147,7 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
     return FL_OK;
   }
 
-  content = FlTextDecode(map.data, map.size, &cch, c->alloc);
+  content = FlTextDecode((const uint8_t *)map.data, map.size, &cch, c->alloc);
   if (content == NULL) {
     // ignore error
     FlMemUnmap(&map);
@@ -192,7 +192,7 @@ int fl_add_subs(FL_LoaderCtx *c, const wchar_t *path) {
 
 static int
 fl_walk_font_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
-  FL_LoaderCtx *c = arg;
+  FL_LoaderCtx *c = (FL_LoaderCtx *)arg;
   const int r = fl_check_cancel(c);
   if (r != FL_OK)
     return r;
@@ -256,7 +256,7 @@ static void fl_blacklist_load(FL_LoaderCtx *c, const wchar_t *filename) {
     FlMemMap(str_db_get(&c->walk_path, 0), &map);
     if (!map.data)
       break;
-    content = FlTextDecode(map.data, map.size, &cch, c->alloc);
+    content = FlTextDecode((const uint8_t *)map.data, map.size, &cch, c->alloc);
     if (content == NULL)
       break;
     fl_blacklist_parse(c, content, cch);
@@ -374,7 +374,7 @@ static int IsFontInstalled(const wchar_t *face) {
 
 static int fl_face_loaded(FL_LoaderCtx *c, const wchar_t *face) {
   const size_t pos = str_db_tell(&c->walk_path);
-  FL_FontMatch *data = c->loaded_font.data;
+  FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
   for (size_t i = 0; i != c->loaded_font.n; i++) {
     FL_FontMatch *m = &data[i];
     if (m->face == face)
@@ -385,7 +385,7 @@ static int fl_face_loaded(FL_LoaderCtx *c, const wchar_t *face) {
 
 static int fl_file_loaded(FL_LoaderCtx *c, const wchar_t *file) {
   const size_t pos = str_db_tell(&c->walk_path);
-  FL_FontMatch *data = c->loaded_font.data;
+  FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
   for (size_t i = 0; i != c->loaded_font.n; i++) {
     FL_FontMatch *m = &data[i];
     if (m->filename == file)
@@ -396,7 +396,7 @@ static int fl_file_loaded(FL_LoaderCtx *c, const wchar_t *file) {
 
 static int fl_hash_loaded(FL_LoaderCtx *c, const uint8_t hash[32]) {
   const size_t pos = str_db_tell(&c->walk_path);
-  FL_FontMatch *data = c->loaded_font.data;
+  FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
   for (size_t i = 0; i != c->loaded_font.n; i++) {
     FL_FontMatch *m = &data[i];
     if (m->flag & FL_LOAD_OK) {
@@ -432,8 +432,8 @@ fl_calc_hash(FL_LoaderCtx *c, const void *data, size_t size, uint8_t res[32]) {
     if (hash_obj == NULL)
       break;
 
-    status =
-        BCryptCreateHash(c->hash_alg, &hash, hash_obj, sz_hash_obj, NULL, 0, 0);
+    status = BCryptCreateHash(
+        c->hash_alg, &hash, (PUCHAR)hash_obj, sz_hash_obj, NULL, 0, 0);
     if (!NT_SUCCESS(status))
       break;
 
@@ -539,7 +539,8 @@ static int fl_load_file(
 }
 
 int fl_load_rec_sort(const void *ptr_a, const void *ptr_b, void *arg) {
-  const FL_FontMatch *a = ptr_a, *b = ptr_b;
+  const FL_FontMatch *a = (const FL_FontMatch *)ptr_a;
+  const FL_FontMatch *b = (const FL_FontMatch *)ptr_b;
 
   // sort flag in descent order
   const int flag_mask = 16 | 8;  // FL_LOAD_ERR | FL_LOAD_MISS
@@ -633,9 +634,9 @@ int fl_load_fonts(FL_LoaderCtx *c) {
       if (num_dup == num_total) {
         // FL_FontMatch m = {.flag = FL_LOAD_DUP, .face = face};
         FL_FontMatch m;
-        FL_FontMatch *data = c->loaded_font.data;
+        FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
         FL_FontMatch *ref = &data[dup_candidate];
-        m.flag = FL_LOAD_DUP | data[dup_candidate].flag;
+        m.flag = (FL_MatchFlag)(FL_LOAD_DUP | data[dup_candidate].flag);
         m.face = face;
         m.filename = ref->filename;
         vec_append(&c->loaded_font, &m, 1);
@@ -718,9 +719,9 @@ int fl_load_fonts_incremental(FL_LoaderCtx *c) {
       } while (r != FL_OUT_OF_MEMORY && num_loaded <= 16 && fs_iter_next(&it));
       if (num_dup == num_total) {
         FL_FontMatch m;
-        FL_FontMatch *data = c->loaded_font.data;
+        FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
         FL_FontMatch *ref = &data[dup_candidate];
-        m.flag = FL_LOAD_DUP | data[dup_candidate].flag;
+        m.flag = (FL_MatchFlag)(FL_LOAD_DUP | data[dup_candidate].flag);
         m.face = face;
         m.filename = ref->filename;
         vec_append(&c->loaded_font, &m, 1);
@@ -745,7 +746,7 @@ int fl_walk_loaded_fonts(FL_LoaderCtx *c, WalkLoadedCallback cb, void *param) {
     return FL_OUT_OF_MEMORY;
 
   const size_t pos = str_db_tell(&c->walk_path);
-  FL_FontMatch *data = c->loaded_font.data;
+  FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
   for (size_t i = 0; i != c->loaded_font.n; i++) {
     const wchar_t *path = NULL;
     FL_FontMatch *m = &data[i];
@@ -764,7 +765,7 @@ int fl_walk_loaded_fonts(FL_LoaderCtx *c, WalkLoadedCallback cb, void *param) {
 
 static int
 fl_unload_cb(FL_LoaderCtx *c, size_t i, const wchar_t *path, void *param) {
-  FL_FontMatch *data = c->loaded_font.data;
+  FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
   FL_FontMatch *m = &data[i];
   if (!(m->flag & FL_LOAD_DUP)) {
     if (m->flag & FL_LOAD_OK) {
@@ -790,7 +791,7 @@ int fl_unload_fonts(FL_LoaderCtx *c) {
 
 static int
 fl_cache_cb(FL_LoaderCtx *c, size_t i, const wchar_t *path, void *param) {
-  FL_FontMatch *data = c->loaded_font.data;
+  FL_FontMatch *data = (FL_FontMatch *)c->loaded_font.data;
   FL_FontMatch *m = &data[i];
   if (m->flag & FL_LOAD_DUP) {
     return FL_OK;
@@ -807,7 +808,7 @@ fl_cache_cb(FL_LoaderCtx *c, size_t i, const wchar_t *path, void *param) {
   FlMemMap(path, &mmap);
   const size_t step = 4 * 1024;
   volatile char chksum = 0;
-  volatile const char *bytes = mmap.data;
+  volatile const char *bytes = (const char *)mmap.data;
   for (size_t pos = 0; pos < mmap.size; pos += step) {
     const DWORD now = GetTickCount();
     if (now - tick > 10) {

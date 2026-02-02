@@ -3,7 +3,11 @@
 #include "util.h"
 
 int vec_init(vec_t *v, size_t size, allocator_t *alloc) {
-  *v = (vec_t){.size = size, .alloc = alloc};
+  v->data = NULL;
+  v->n = 0;
+  v->capacity = 0;
+  v->size = size;
+  v->alloc = alloc;
   return 0;
 }
 
@@ -39,9 +43,9 @@ int vec_append(vec_t *v, void *data, size_t n) {
   if (space < n)
     return 0;
 
-  const uint8_t *src = data;
+  const uint8_t *src = (const uint8_t *)data;
   const uint8_t *last = &src[n * v->size];
-  uint8_t *dst = v->data;
+  uint8_t *dst = (uint8_t *)v->data;
   dst += v->n * v->size;
 
   v->n += n;
@@ -155,17 +159,11 @@ const wchar_t *str_db_str(str_db_t *s, size_t pos, const wchar_t *str) {
 }
 
 void str_db_loads(str_db_t *s, const wchar_t *str, size_t cch, wchar_t ex_pad) {
-  // clang-format off
-  *s = (str_db_t){
-    .vec= (vec_t){
-      .data = (void*)str,
-      .n = cch,
-      .capacity = cch,
-      .size = sizeof str[0],
-      .alloc = NULL
-    },
-    .ex_pad = ex_pad,
-    .pad_len = ex_pad ? 2 : 1
-  };
-  // clang-format on
+  s->vec.data = (void *)str;
+  s->vec.n = cch;
+  s->vec.capacity = cch;
+  s->vec.size = sizeof str[0];
+  s->vec.alloc = NULL;
+  s->ex_pad = ex_pad;
+  s->pad_len = ex_pad ? 2 : 1;
 }

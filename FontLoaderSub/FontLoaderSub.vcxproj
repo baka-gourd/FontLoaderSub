@@ -147,9 +147,13 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
     <Link>
       <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\debug\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions>$(CMDLINE_DEFINE);%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -213,11 +217,14 @@
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions>$(CMDLINE_DEFINE);%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -236,6 +243,8 @@
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <BufferSecurityCheck>false</BufferSecurityCheck>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -268,19 +277,19 @@
     <Manifest Include="res\app.manifest" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="ass_parser.c" />
-    <ClCompile Include="ass_string.c" />
-    <ClCompile Include="cstl.c" />
-    <ClCompile Include="exporter.c" />
-    <ClCompile Include="font_loader.c" />
-    <ClCompile Include="font_set.c" />
-    <ClCompile Include="main.c" />
-    <ClCompile Include="shortcut.c" />
-    <ClCompile Include="test.c" />
-    <ClCompile Include="tim_sort.c" />
-    <ClCompile Include="ttf_parser.c" />
-    <ClCompile Include="util.c" />
-    <ClCompile Include="path.c" />
+    <ClCompile Include="ass_parser.cpp" />
+    <ClCompile Include="ass_string.cpp" />
+    <ClCompile Include="cstl.cpp" />
+    <ClCompile Include="exporter.cpp" />
+    <ClCompile Include="font_loader.cpp" />
+    <ClCompile Include="font_set.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="shortcut.cpp" />
+    <ClCompile Include="test.cpp" />
+    <ClCompile Include="tim_sort.cpp" />
+    <ClCompile Include="ttf_parser.cpp" />
+    <ClCompile Include="util.cpp" />
+    <ClCompile Include="path.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ass_parser.h" />

@@ -1,5 +1,17 @@
 #pragma once
 
+#ifndef UNICODE
+#define UNICODE
+#endif
+
+#ifndef _UNICODE
+#define _UNICODE
+#endif
+
+#ifndef CINTERFACE
+#define CINTERFACE
+#endif
+
 #include <Windows.h>
 #include <CommCtrl.h>
 
