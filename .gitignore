@@ -241,3 +241,6 @@ ModelManifest.xml
 
 # FAKE - F# Make
 .fake/
+# pixi environments
+.pixi/*
+!.pixi/config.toml

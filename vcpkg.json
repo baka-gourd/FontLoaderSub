@@ -1,0 +1,13 @@
+{
+  "name": "fontloadersub",
+  "version-string": "0.1.0",
+  "builtin-baseline": "6d7bf7ef2193e2d1c5798a5ff8811d533104c861",
+  "dependencies": [
+    "abseil",
+    "simdutf",
+    "flatbuffers",
+    "zstd",
+    "fmt",
+    "spdlog"
+  ]
+}

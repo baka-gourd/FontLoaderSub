@@ -25,4 +25,8 @@ Instead of font files, drag-and-drop ASS/SSA subtitles and it will load correspo
 
 ## Build
 
-vcpkg: zstd,spdlog,abseil,simdutf,flatbuffers; all in static link
+Example (with pixi):
+
+```bash
+pixi run build
+```

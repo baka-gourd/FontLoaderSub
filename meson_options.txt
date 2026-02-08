@@ -1,0 +1,13 @@
+option(
+  'vcpkg_root',
+  type: 'string',
+  value: '',
+  description: 'Path to the vcpkg root directory',
+)
+
+option(
+  'vcpkg_triplet',
+  type: 'string',
+  value: 'x64-windows-static',
+  description: 'vcpkg target triplet',
+)
