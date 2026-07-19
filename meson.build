@@ -135,9 +135,12 @@ if not dep_spdlog.found()
 endif
 
 dep_xxhash = cpp.find_library('xxhash', dirs: lib_dirs)
+dep_detours = cpp.find_library('detours', dirs: lib_dirs)
 
 dep_shlwapi = cpp.find_library('shlwapi')
 dep_comctl32 = cpp.find_library('comctl32')
+dep_uxtheme = cpp.find_library('uxtheme')
+dep_dwmapi = cpp.find_library('dwmapi')
 
 src_inc = include_directories('FontLoaderSub')
 res_inc = include_directories('FontLoaderSub/res')
@@ -149,6 +152,7 @@ vcpkg_include_arg = cpp.get_id() == 'msvc' ? '/I' + vcpkg_include_dir : '-I' + v
 sources = files(
   'FontLoaderSub/ass_parser.cpp',
   'FontLoaderSub/ass_string.cpp',
+  'FontLoaderSub/dark_mode.cpp',
   'FontLoaderSub/exporter.cpp',
   'FontLoaderSub/font_loader.cpp',
   'FontLoaderSub/font_set.cpp',
@@ -188,8 +192,11 @@ executable(
     dep_fmt,
     dep_spdlog,
     dep_xxhash,
+    dep_detours,
     dep_shlwapi,
     dep_comctl32,
+    dep_uxtheme,
+    dep_dwmapi,
   ],
   win_subsystem: 'windows',
 )

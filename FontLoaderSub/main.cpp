@@ -7,6 +7,7 @@
 #include <string>
 
 #include "ass_string.h"
+#include "dark_mode.h"
 #include "exporter.h"
 #include "log.h"
 #include "util.h"
@@ -572,6 +573,7 @@ static HRESULT CALLBACK DlgWorkProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
+  DarkModeTaskDialogNotification(hWnd, uNotification);
   auto c = (FL_AppCtx *)dwRefData;
   int navigated = 0;
   int refresh_status = 0;
@@ -631,7 +633,7 @@ static HRESULT CALLBACK DlgWorkProc(
               hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_missing);
           navigated = 1;
         } else {
-          TaskDialog(
+          AppTaskDialog(
               hWnd, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...",
               nullptr, TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
           PostMessage(hWnd, WM_CLOSE, 0, 0);
@@ -650,7 +652,7 @@ static HRESULT CALLBACK DlgWorkProc(
       } else {
         if (c->app_state != APP_CANCELLED) {
           // it's an error
-          TaskDialog(
+          AppTaskDialog(
               hWnd, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...",
               nullptr, TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
         }
@@ -671,6 +673,7 @@ static HRESULT CALLBACK DlgMissingProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
+  DarkModeTaskDialogNotification(hWnd, uNotification);
   auto c = reinterpret_cast<FL_AppCtx *>(dwRefData);
   if (uNotification != TDN_BUTTON_CLICKED)
     return S_OK;
@@ -700,6 +703,7 @@ static HRESULT CALLBACK DlgHelpProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
+  DarkModeTaskDialogNotification(hWnd, uNotification);
   auto c = (FL_AppCtx *)dwRefData;
   if (uNotification == TDN_HYPERLINK_CLICKED) {
     PostMessage(hWnd, WM_CLOSE, 0, 0);
@@ -714,11 +718,26 @@ typedef struct {
   const wchar_t *details;
 } FL_DuplicateDialogData;
 
+static void AppSetSystemWindowIcon(HWND hWnd) {
+  HICON icon = LoadIconW(nullptr, IDI_APPLICATION);
+  if (icon == nullptr)
+    return;
+  SendMessageW(hWnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+  SendMessageW(
+      hWnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+}
+
 static INT_PTR CALLBACK DuplicateDialogProc(
     HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+  LRESULT darkResult = 0;
+  if (DarkModeHandleDialogMessage(
+          hWnd, message, wParam, lParam, &darkResult)) {
+    return static_cast<INT_PTR>(darkResult);
+  }
   if (message == WM_INITDIALOG) {
     auto data = reinterpret_cast<FL_DuplicateDialogData *>(lParam);
     SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data));
+    AppSetSystemWindowIcon(hWnd);
     SetWindowText(
         hWnd, ResLoadString(data->app->hInst, IDS_DUPLICATE_FONT));
     SetDlgItemText(hWnd, IDC_DUPLICATE_SUMMARY, data->summary);
@@ -844,7 +863,7 @@ static void AppShowDuplicateFonts(HWND hWnd, FL_AppCtx *c) {
   }
 
   if (detail_text.empty() || summary.empty()) {
-    TaskDialog(
+    AppTaskDialog(
         hWnd, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER),
         MAKEINTRESOURCE(IDS_DUPLICATE_FONT),
         MAKEINTRESOURCE(IDS_DUPLICATE_FONT_NONE), TDCBF_CLOSE_BUTTON,
@@ -854,7 +873,7 @@ static void AppShowDuplicateFonts(HWND hWnd, FL_AppCtx *c) {
 
   HMODULE rich_edit = LoadLibraryW(L"Msftedit.dll");
   if (rich_edit == nullptr) {
-    TaskDialog(
+    AppTaskDialog(
         hWnd, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER),
         MAKEINTRESOURCE(IDS_DUPLICATE_FONT), summary.c_str(),
         TDCBF_CLOSE_BUTTON, TD_INFORMATION_ICON, nullptr);
@@ -952,6 +971,7 @@ static HRESULT CALLBACK DlgDoneProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
+  DarkModeTaskDialogNotification(hWnd, uNotification);
   auto c = (FL_AppCtx *)dwRefData;
   if (uNotification == TDN_NAVIGATED) {
     FS_Stat stat = {0};
@@ -1229,13 +1249,15 @@ int WINAPI _tWinMain(
   alloc.alloc = mem_realloc;
   alloc.arg = heap;
   fl_log::Init();
+  DarkModeInitialize();
   SPDLOG_INFO("FontLoaderSub start, pid={}", GetCurrentProcessId());
   FL_AppCtx *ctx = &g_app;
   if (ctx == nullptr || !AppInit(ctx, hInstance, &alloc)) {
-    TaskDialog(
+    AppTaskDialog(
         nullptr, hInstance, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...",
         nullptr, TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
     SPDLOG_ERROR("AppInit failed");
+    DarkModeShutdown();
     fl_log::Shutdown();
     return 1;
   }
@@ -1256,6 +1278,7 @@ int WINAPI _tWinMain(
   }
 
   SPDLOG_INFO("FontLoaderSub exit");
+  DarkModeShutdown();
   fl_log::Shutdown();
   return 0;
 }

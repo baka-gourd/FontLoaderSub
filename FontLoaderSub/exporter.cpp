@@ -4,6 +4,7 @@
 
 #include <Shobjidl.h>
 
+#include "dark_mode.h"
 #include "log.h"
 #include "utf.h"
 
@@ -246,7 +247,7 @@ int ExportLoadedFonts(HWND hWnd, FL_AppCtx *c) {
   CoTaskMemFree(path_name);
   if (!succ) {
     SPDLOG_ERROR("ExportLoadedFonts failed");
-    TaskDialog(
+    AppTaskDialog(
         nullptr, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...",
         nullptr, TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
   }

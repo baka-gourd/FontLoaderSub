@@ -7,6 +7,7 @@
 #include <cwchar>
 #include <limits>
 
+#include "dark_mode.h"
 #include "res/resource.h"
 
 typedef enum {
@@ -258,6 +259,7 @@ static HRESULT CALLBACK DlgShortcutProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
+  DarkModeTaskDialogNotification(hWnd, uNotification);
   FL_ShortCtx *c = (FL_ShortCtx *)dwRefData;
   switch (uNotification) {
   case TDN_BUTTON_CLICKED: {
