@@ -2,7 +2,7 @@ image: Visual Studio 2019
 
 install:
 - ps: |
-    $env:COMM_TAG = $(git describe --always --dirty="(X)")
+    $env:COMM_TAG = & .\tools\version.ps1
     $env:PROJECT = "FontLoaderSub"
     $env:CMDLINE_DEFINE = "FONTLOADERSUB_GIT_VERSION=\""{0}\""" -f $env:COMM_TAG
 

@@ -3,7 +3,7 @@ authors = ["baka-gourd <36119339+baka-gourd@users.noreply.github.com>"]
 channels = ["conda-forge"]
 name = "FontLoaderSub"
 platforms = ["win-64"]
-version = "0.1.0"
+version = "2.0.0"
 preview = ["pixi-build"]
 
 [pypi-options]
@@ -14,11 +14,11 @@ extra-index-urls = ["https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"]
 build = { cmd = "meson compile -C build-meson", depends-on = ["setup"] }
 
 [tasks.setup]
-cmd = "meson setup build-meson --wipe -Dvcpkg_root=\"$PIXI_PROJECT_ROOT/vcpkg\" -Dvcpkg_triplet=x64-windows-static -Dbuildtype=release --vsenv"
+cmd = "meson setup build-meson --wipe -Dvcpkg_root=\"$PIXI_PROJECT_ROOT/vcpkg\" -Dvcpkg_triplet=x64-windows-static -Dbuildtype=release -Db_lto=true --vsenv"
 
 [dependencies]
 python = "3.12.*"
 
 [pypi-dependencies]
 ninja = ">=1.13.0, <2"
-meson = { git = "https://github.com/mesonbuild/meson" }
+meson = ">=1.11.2, <2"

@@ -1,7 +1,7 @@
 project(
   'FontLoaderSub',
   'cpp',
-  version: '0.1.0',
+  version: '2.0.0',
   default_options: [
     'cpp_std=c++20',
     'warning_level=3',
@@ -11,6 +11,27 @@ project(
 
 cpp = meson.get_compiler('cpp')
 fs = import('fs')
+
+version_script = meson.project_source_root() / 'tools' / 'version.ps1'
+version_result = run_command(
+  'powershell',
+  '-NoProfile',
+  '-ExecutionPolicy', 'Bypass',
+  '-File', version_script,
+  meson.project_version(),
+  check: false,
+)
+app_version = version_result.returncode() == 0 ? version_result.stdout().strip() : meson.project_version()
+if app_version == ''
+  app_version = meson.project_version()
+endif
+message('Application version: ' + app_version)
+version_config = configuration_data()
+version_config.set_quoted('FONTLOADERSUB_GIT_VERSION', app_version)
+configure_file(
+  output: 'fontloadersub_version.h',
+  configuration: version_config,
+)
 
 if host_machine.system() != 'windows'
   error('FontLoaderSub currently supports only Windows builds')
@@ -119,6 +140,7 @@ dep_bcrypt = cpp.find_library('bcrypt')
 
 src_inc = include_directories('FontLoaderSub')
 res_inc = include_directories('FontLoaderSub/res')
+root_inc = include_directories('.')
 tlx_inc = include_directories('third_party/tlx')
 queue_inc = include_directories('third_party/concurrentqueue')
 vcpkg_include_arg = cpp.get_id() == 'msvc' ? '/I' + vcpkg_include_dir : '-I' + vcpkg_include_dir
@@ -148,7 +170,8 @@ resources = windows_mod.compile_resources(
     'FontLoaderSub/res/res_zh-cn.rc',
     'FontLoaderSub/res/res_zh-tw.rc',
   ),
-  include_directories: [src_inc, res_inc],
+  args: ['/dFONTLOADERSUB_MESON_BUILD'],
+  include_directories: [src_inc, res_inc, root_inc],
 )
 
 executable(
