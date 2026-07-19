@@ -244,3 +244,4 @@ ModelManifest.xml
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+.clice/
