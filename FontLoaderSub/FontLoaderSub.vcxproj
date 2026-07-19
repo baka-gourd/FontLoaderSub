@@ -163,7 +163,7 @@
       <AdditionalIncludeDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\include;$(SolutionDir)third_party\tlx;$(SolutionDir)third_party\concurrentqueue</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;$(SimdutfLib);$(FlatbuffersLib);$(ZstdLib);$(FmtLib);$(SpdlogLib);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;xxhash.lib;$(SimdutfLib);$(FlatbuffersLib);$(ZstdLib);$(FmtLib);$(SpdlogLib);%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\debug\lib;$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
@@ -182,7 +182,7 @@
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;$(SimdutfLib);$(FlatbuffersLib);$(ZstdLib);$(FmtLib);$(SpdlogLib);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;xxhash.lib;$(SimdutfLib);$(FlatbuffersLib);$(ZstdLib);$(FmtLib);$(SpdlogLib);%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\debug\lib;$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
@@ -205,7 +205,7 @@
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;zstd.lib;fmt.lib;spdlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;xxhash.lib;simdutf.lib;flatbuffers.lib;zstd.lib;fmt.lib;spdlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
@@ -231,7 +231,7 @@
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;zstd.lib;fmt.lib;spdlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;xxhash.lib;simdutf.lib;flatbuffers.lib;zstd.lib;fmt.lib;spdlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <EntryPointSymbol>MyEntryPoint</EntryPointSymbol>
@@ -260,7 +260,7 @@
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;zstd.lib;fmt.lib;spdlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;xxhash.lib;simdutf.lib;flatbuffers.lib;zstd.lib;fmt.lib;spdlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
@@ -287,7 +287,7 @@
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;Bcrypt.lib;simdutf.lib;flatbuffers.lib;zstd.lib;fmt.lib;spdlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ShLwApi.Lib;ComCtl32.Lib;xxhash.lib;simdutf.lib;flatbuffers.lib;zstd.lib;fmt.lib;spdlog.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VCPKG_ROOT)installed\$(VCPKG_DEFAULT_TRIPLET)\lib</AdditionalLibraryDirectories>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <EntryPointSymbol>MyEntryPoint</EntryPointSymbol>
@@ -352,6 +352,15 @@
     <None Include="font_db.fbs" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="SetSemanticVersion" BeforeTargets="ResourceCompile">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)..\tools\version.ps1&quot;" ConsoleToMSBuild="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="DetectedSemanticVersion" />
+    </Exec>
+    <PropertyGroup>
+      <DetectedSemanticVersion Condition="'$(DetectedSemanticVersion)'==''">2.0.0</DetectedSemanticVersion>
+      <CMDLINE_DEFINE Condition="'$(CMDLINE_DEFINE)'==''">FONTLOADERSUB_GIT_VERSION=\&quot;$(DetectedSemanticVersion)\&quot;</CMDLINE_DEFINE>
+    </PropertyGroup>
+  </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

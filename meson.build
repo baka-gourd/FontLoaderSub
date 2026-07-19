@@ -134,9 +134,10 @@ if not dep_spdlog.found()
   dep_spdlog = cpp.find_library('spdlog', dirs: lib_dirs)
 endif
 
+dep_xxhash = cpp.find_library('xxhash', dirs: lib_dirs)
+
 dep_shlwapi = cpp.find_library('shlwapi')
 dep_comctl32 = cpp.find_library('comctl32')
-dep_bcrypt = cpp.find_library('bcrypt')
 
 src_inc = include_directories('FontLoaderSub')
 res_inc = include_directories('FontLoaderSub/res')
@@ -186,9 +187,9 @@ executable(
     dep_zstd,
     dep_fmt,
     dep_spdlog,
+    dep_xxhash,
     dep_shlwapi,
     dep_comctl32,
-    dep_bcrypt,
   ],
   win_subsystem: 'windows',
 )

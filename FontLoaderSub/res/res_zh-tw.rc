@@ -1,4 +1,4 @@
-#pragma code_page(65001)
+﻿#pragma code_page(65001)
 
 #include <Windows.h>
 #include <CommCtrl.h>
@@ -32,6 +32,21 @@ STRINGTABLE
   IDS_SHORTCUT_ADD_SENDTO "在 傳送到 中新增"
   IDS_SHORTCUT_DEL_SENDTO "從 傳送到 裡移除"
   IDS_MENU "選單(&M)"
+  IDS_WORK_CHECK "檢查字型中"
+  IDS_MISSING_FONT "缺少字型"
+  IDS_MISSING_FONT_CONTENT "找不到以下 %1!u! 個字型。可以取消本次操作，或繼續載入其餘可用字型。"
+  IDS_CONTINUE_LOAD "繼續載入(&L)"
+  IDS_MISSING_EXPAND "顯示缺少的字型"
+  IDS_MISSING_COLLAPSE "隱藏缺少的字型"
+  IDS_DUPLICATE_FONT "字型去重"
+  IDS_DUPLICATE_FONT_CONTENT "發現 %1!u! 個內容完全相同的重複字型檔案，%2!u! 個字型名稱存在不同版本。以下均為相對於程式字型目錄的路徑。"
+  IDS_DUPLICATE_FONT_NONE "索引中未發現內容完全相同的重複字型，也未發現同名但版本不同的字型。"
+  IDS_DUPLICATE_EXPAND "顯示重複字型路徑"
+  IDS_DUPLICATE_COLLAPSE "隱藏重複字型路徑"
+  IDS_DUPLICATE_IDENTICAL "內容完全相同（可刪除以下副本）"
+  IDS_DUPLICATE_VERSIONS "同名字型的不同版本"
+  IDS_DUPLICATE_UNKNOWN_VERSION "未知版本"
+  IDS_CLOSE "關閉"
 }
 
 LANGUAGE LANG_CHINESE, SUBLANG_DEFAULT
@@ -41,6 +56,7 @@ IDR_BTN_MENU MENU
   {
     MENUITEM "更新索引(&R)", ID_BTN_RESCAN
     MENUITEM "匯出字型(&E)", ID_BTN_EXPORT
+    MENUITEM "字型去重(&D)", ID_BTN_DUPLICATE_FONT
     MENUITEM SEPARATOR
     MENUITEM "說明(&H)", ID_BTN_HELP
   }

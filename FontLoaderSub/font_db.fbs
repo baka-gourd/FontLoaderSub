@@ -12,6 +12,8 @@ table FontEntry {
   face:string;
   ver:string;
   format:FontFormat = None;
+  hash_low64:ulong;
+  hash_high64:ulong;
 }
 
 table FontDb {

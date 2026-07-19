@@ -1,6 +1,9 @@
 #include "main.h"
 
+#include <Richedit.h>
+
 #include <atomic>
+#include <new>
 #include <string>
 
 #include "ass_string.h"
@@ -17,6 +20,8 @@
 #define kMessageWindowClass L"FontLoaderSubMessageWindow"
 
 static DWORD WINAPI app_worker(LPVOID param);
+static void AppStopCacheWorker(FL_AppCtx *c);
+static int AppNavigateDone(HWND hWnd, FL_AppCtx *c, int font_changed);
 static LRESULT CALLBACK DoneDialogSubclassProc(
     HWND hWnd,
     UINT uMsg,
@@ -37,18 +42,151 @@ static std::wstring NormalizeSubtitlePath(const wchar_t *filePath) {
   return normalized;
 }
 
-static int IsSubtitleFileLoaded(FL_AppCtx *c, const wchar_t *filePath) {
-  std::wstring normalized = NormalizeSubtitlePath(filePath);
-  if (normalized.empty())
+static int AppBeginSubtitleBatch(FL_AppCtx *c) {
+  if (c->batch_active)
+    return 1;
+
+  try {
+    c->batch_sub_font_set = c->loader.sub_font_set;
+    c->batch_loaded_sub_files = c->loader.loaded_sub_files;
+  } catch (const std::bad_alloc &) {
+    c->batch_sub_font_set.clear();
+    c->batch_loaded_sub_files.clear();
     return 0;
-  return c->loaded_subs.find(normalized) != c->loaded_subs.end();
+  }
+
+  c->batch_sub_fonts_size = c->loader.sub_fonts.size();
+  c->batch_num_sub =
+      c->loader.num_sub.load(std::memory_order_relaxed);
+  c->batch_num_sub_font =
+      c->loader.num_sub_font.load(std::memory_order_relaxed);
+  c->batch_first_font = c->batch_sub_fonts_size;
+  c->batch_loaded_roots.clear();
+  c->batch_active = 1;
+  return 1;
 }
 
-static int AddSubtitleFileToLoaded(FL_AppCtx *c, const wchar_t *filePath) {
-  std::wstring normalized = NormalizeSubtitlePath(filePath);
-  if (normalized.empty())
+static void AppClearSubtitleBatch(FL_AppCtx *c) {
+  c->batch_sub_font_set.clear();
+  c->batch_loaded_sub_files.clear();
+  c->batch_loaded_roots.clear();
+  c->pending_paths.clear();
+  c->batch_active = 0;
+}
+
+static void AppCommitSubtitleBatch(FL_AppCtx *c) {
+  try {
+    for (const auto &path : c->batch_loaded_roots) {
+      c->loaded_subs.insert(path);
+    }
+  } catch (const std::bad_alloc &) {
+    SPDLOG_WARN("Failed to update top-level subtitle dedup state");
+  }
+  AppClearSubtitleBatch(c);
+}
+
+static void AppRollbackSubtitleBatch(FL_AppCtx *c) {
+  if (c->batch_active) {
+    if (c->loader.sub_fonts.size() >= c->batch_sub_fonts_size)
+      c->loader.sub_fonts.resize(c->batch_sub_fonts_size);
+    c->loader.sub_font_set.swap(c->batch_sub_font_set);
+    c->loader.loaded_sub_files.swap(c->batch_loaded_sub_files);
+    c->loader.num_sub.store(c->batch_num_sub, std::memory_order_relaxed);
+    c->loader.num_sub_font.store(
+        c->batch_num_sub_font, std::memory_order_relaxed);
+  }
+  AppClearSubtitleBatch(c);
+}
+
+static int AppAddSubtitleRoot(FL_AppCtx *c, const wchar_t *path) {
+  std::wstring normalized = NormalizeSubtitlePath(path);
+  if (!normalized.empty()) {
+    if (c->loaded_subs.find(normalized) != c->loaded_subs.end())
+      return FL_OK;
+    for (const auto &pending : c->batch_loaded_roots) {
+      if (pending == normalized)
+        return FL_OK;
+    }
+  }
+
+  const int r = fl_add_subs(&c->loader, path);
+  if (r == FL_OK && !normalized.empty()) {
+    try {
+      c->batch_loaded_roots.push_back(std::move(normalized));
+    } catch (const std::bad_alloc &) {
+      return FL_OUT_OF_MEMORY;
+    }
+  }
+  return r;
+}
+
+static int AppQueueDrop(FL_AppCtx *c, HDROP hDrop, HWND navigate_hwnd) {
+  if (c == nullptr || c->app_state != APP_DONE) {
+    DragFinish(hDrop);
     return 0;
-  return c->loaded_subs.insert(std::move(normalized)).second ? 1 : 0;
+  }
+  if (InterlockedExchange(&c->drop_guard, 1) != 0) {
+    DragFinish(hDrop);
+    return 0;
+  }
+
+  int queued = 0;
+  do {
+    const DWORD now_tick = GetTickCount();
+    if (now_tick - c->last_drop_tick < c->drop_debounce_ms)
+      break;
+    c->last_drop_tick = now_tick;
+
+    if (c->thread_load != nullptr &&
+        WaitForSingleObject(c->thread_load, 0) == WAIT_TIMEOUT) {
+      SPDLOG_INFO("Drop ignored: worker already running");
+      break;
+    }
+    if (c->thread_load != nullptr) {
+      CloseHandle(c->thread_load);
+      c->thread_load = nullptr;
+    }
+
+    std::vector<std::wstring> paths;
+    const UINT file_count = DragQueryFile(hDrop, 0xFFFFFFFF, nullptr, 0);
+    try {
+      paths.reserve(file_count);
+      for (UINT i = 0; i < file_count; i++) {
+        const UINT len = DragQueryFile(hDrop, i, nullptr, 0);
+        if (len == 0)
+          continue;
+        std::wstring path(len + 1, L'\0');
+        const UINT written = DragQueryFile(hDrop, i, &path[0], len + 1);
+        path.resize(written);
+        if (!path.empty())
+          paths.push_back(std::move(path));
+      }
+    } catch (const std::bad_alloc &) {
+      paths.clear();
+    }
+    if (paths.empty())
+      break;
+
+    if (navigate_hwnd == nullptr)
+      navigate_hwnd = c->work_hwnd;
+    if (navigate_hwnd == nullptr)
+      break;
+
+    c->pending_paths = std::move(paths);
+    c->incremental_load = 1;
+    c->cancelled = 0;
+    c->req_exit = 0;
+    c->app_state = APP_LOAD_SUB;
+    SetEvent(c->evt_stop_cache);
+    DragAcceptFiles(navigate_hwnd, FALSE);
+    SendMessage(
+        navigate_hwnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
+    queued = 1;
+  } while (0);
+
+  DragFinish(hDrop);
+  InterlockedExchange(&c->drop_guard, 0);
+  return queued;
 }
 
 static void *mem_realloc(void *existing, size_t size, void *arg) {
@@ -71,87 +209,7 @@ MessageWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
   case WM_CREATE:
     return 0;
   case WM_DROPFILES:
-    if (c && c->app_state == APP_DONE) {
-      auto hDrop = (HDROP)wParam;
-      if (InterlockedExchange(&c->drop_guard, 1) != 0) {
-        DragFinish(hDrop);
-        return 0;
-      }
-      DWORD now_tick = GetTickCount();
-      if (now_tick - c->last_drop_tick < c->drop_debounce_ms) {
-        DragFinish(hDrop);
-        InterlockedExchange(&c->drop_guard, 0);
-        return 0;
-      }
-      c->last_drop_tick = now_tick;
-      UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, nullptr, 0);
-      int has_new_files = 0;
-
-      for (UINT i = 0; i < fileCount; i++) {
-        UINT fileNameLen = DragQueryFile(hDrop, i, nullptr, 0);
-        if (fileNameLen > 0) {
-          std::wstring fileName;
-          fileName.resize(fileNameLen + 1);
-          UINT written = DragQueryFile(hDrop, i, &fileName[0], fileNameLen + 1);
-          fileName.resize(written);
-
-          // Check if subtitle file is already loaded
-          if (!IsSubtitleFileLoaded(c, fileName.c_str())) {
-            int r = fl_add_subs(&c->loader, fileName.c_str());
-            if (r == FL_OK) {
-              AddSubtitleFileToLoaded(c, fileName.c_str());
-              std::string file_u8;
-              if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
-                SPDLOG_INFO("New subtitle loaded from drag-drop: {}", file_u8);
-              } else {
-                SPDLOG_INFO("New subtitle loaded from drag-drop (utf16)");
-              }
-              has_new_files = 1;
-            } else {
-              std::string file_u8;
-              if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
-                SPDLOG_INFO(
-                    "Failed to add subtitle from drag-drop: {} (err={})",
-                    file_u8, r);
-              } else {
-                SPDLOG_INFO(
-                    "Failed to add subtitle from drag-drop (err={})", r);
-              }
-            }
-          } else {
-            std::string file_u8;
-            if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
-              SPDLOG_INFO("Skip already loaded subtitle: {}", file_u8);
-            } else {
-              SPDLOG_INFO("Skip already loaded subtitle (utf16)");
-            }
-          }
-        }
-      }
-      DragFinish(hDrop);
-
-      // Only reload if we have new files
-      if (has_new_files) {
-        if (c->thread_load != nullptr &&
-            WaitForSingleObject(c->thread_load, 0) == WAIT_TIMEOUT) {
-          SPDLOG_INFO("Drop ignored: worker already running");
-          InterlockedExchange(&c->drop_guard, 0);
-          return 0;
-        }
-        // Load fonts for new subtitles only (don't unload existing fonts)
-        c->app_state = APP_LOAD_FONT;
-        c->incremental_load = 1;  // Use incremental loading
-        c->cancelled = 0;
-        c->req_exit = 0;
-
-        DWORD thread_id;
-        c->thread_load = CreateThread(nullptr, 0, app_worker, c, 0, &thread_id);
-        if (c->thread_load != nullptr && c->work_hwnd) {
-          SendMessage(c->work_hwnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
-        }
-      }
-      InterlockedExchange(&c->drop_guard, 0);
-    }
+    AppQueueDrop(c, (HDROP)wParam, c ? c->work_hwnd : nullptr);
     return 0;
   case WM_CLOSE:
     DestroyWindow(hWnd);
@@ -176,91 +234,7 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
 
   switch (uMsg) {
   case WM_DROPFILES:
-    if (c && c->app_state == APP_DONE) {
-      auto hDrop = (HDROP)wParam;
-      if (InterlockedExchange(&c->drop_guard, 1) != 0) {
-        DragFinish(hDrop);
-        return 0;
-      }
-      DWORD now_tick = GetTickCount();
-      if (now_tick - c->last_drop_tick < c->drop_debounce_ms) {
-        DragFinish(hDrop);
-        InterlockedExchange(&c->drop_guard, 0);
-        return 0;
-      }
-      c->last_drop_tick = now_tick;
-      UINT fileCount = DragQueryFile(hDrop, 0xFFFFFFFF, nullptr, 0);
-      int has_new_files = 0;
-
-      for (UINT i = 0; i < fileCount; i++) {
-        UINT fileNameLen = DragQueryFile(hDrop, i, nullptr, 0);
-        if (fileNameLen > 0) {
-          std::wstring fileName;
-          fileName.resize(fileNameLen + 1);
-          UINT written = DragQueryFile(hDrop, i, &fileName[0], fileNameLen + 1);
-          fileName.resize(written);
-
-          // Check if subtitle file is already loaded
-          if (!IsSubtitleFileLoaded(c, fileName.c_str())) {
-            int r = fl_add_subs(&c->loader, fileName.c_str());
-            if (r == FL_OK) {
-              AddSubtitleFileToLoaded(c, fileName.c_str());
-              std::string file_u8;
-              if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
-                SPDLOG_INFO(
-                    "New subtitle loaded from done dialog: {}", file_u8);
-              } else {
-                SPDLOG_INFO("New subtitle loaded from done dialog (utf16)");
-              }
-              has_new_files = 1;
-            } else {
-              std::string file_u8;
-              if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
-                SPDLOG_INFO(
-                    "Failed to add subtitle from done dialog: {} (err={})",
-                    file_u8, r);
-              } else {
-                SPDLOG_INFO(
-                    "Failed to add subtitle from done dialog (err={})", r);
-              }
-            }
-          } else {
-            std::string file_u8;
-            if (Utf16ToUtf8(fileName.c_str(), &file_u8)) {
-              SPDLOG_INFO("Skip already loaded subtitle: {}", file_u8);
-            } else {
-              SPDLOG_INFO("Skip already loaded subtitle (utf16)");
-            }
-          }
-        }
-      }
-      DragFinish(hDrop);
-
-      // Only reload if we have new files
-      if (has_new_files) {
-        if (c->thread_load != nullptr &&
-            WaitForSingleObject(c->thread_load, 0) == WAIT_TIMEOUT) {
-          SPDLOG_INFO("Drop ignored: worker already running");
-          InterlockedExchange(&c->drop_guard, 0);
-          return 0;
-        }
-        // Load fonts for new subtitles only (don't unload existing fonts)
-        c->app_state = APP_LOAD_FONT;
-        c->incremental_load = 1;  // Use incremental loading
-        c->cancelled = 0;
-        c->req_exit = 0;
-
-        // Disable drag-drop before navigating away
-        DragAcceptFiles(hWnd, FALSE);
-
-        DWORD thread_id;
-        c->thread_load = CreateThread(nullptr, 0, app_worker, c, 0, &thread_id);
-        if (c->thread_load != nullptr) {
-          SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
-        }
-      }
-      InterlockedExchange(&c->drop_guard, 0);
-    }
+    AppQueueDrop(c, (HDROP)wParam, hWnd);
     return 0;
   default:
     break;
@@ -337,69 +311,165 @@ static int AppBuildLog(FL_AppCtx *c) {
   return !c->log.empty() ? 1 : 0;
 }
 
-static int AppUpdateStatus(FL_AppCtx *c) {
-  FS_Stat stat = {0};
-  if (c->app_state == APP_SCAN_FONT) {
-    stat.num_file = c->loader.num_scan_file.load(std::memory_order_relaxed);
-    stat.num_face = c->loader.num_scan_face.load(std::memory_order_relaxed);
-  } else if (c->loader.font_set && c->app_state != APP_LOAD_CACHE) {
-    fs_stat(c->loader.font_set, &stat);
-  }
-
+static int
+AppFormatStatus(FL_AppCtx *c, wchar_t *buffer, size_t buffer_count) {
   const DWORD_PTR loaded = static_cast<DWORD_PTR>(
       c->loader.num_font_loaded.load(std::memory_order_relaxed));
   const DWORD_PTR failed = static_cast<DWORD_PTR>(
       c->loader.num_font_failed.load(std::memory_order_relaxed));
   const DWORD_PTR unmatched = static_cast<DWORD_PTR>(
       c->loader.num_font_unmatched.load(std::memory_order_relaxed));
+  const DWORD_PTR files = static_cast<DWORD_PTR>(
+      c->loader.num_scan_file.load(std::memory_order_relaxed));
+  const DWORD_PTR faces = static_cast<DWORD_PTR>(
+      c->loader.num_scan_face.load(std::memory_order_relaxed));
   const DWORD_PTR subs =
       static_cast<DWORD_PTR>(c->loader.num_sub.load(std::memory_order_relaxed));
   DWORD_PTR args[] = {
       // arguments
-      loaded, failed, unmatched, stat.num_file, stat.num_face, subs,
+      loaded, failed, unmatched, files, faces, subs,
   };
-  FormatMessage(
-      FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY,
-      ResLoadString(c->hInst, IDS_LOAD_STAT), 0, 0, c->status_txt,
-      _countof(c->status_txt), reinterpret_cast<va_list *>(args));
+  return FormatMessage(
+             FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY,
+             ResLoadString(c->hInst, IDS_LOAD_STAT), 0, 0, buffer,
+             static_cast<DWORD>(buffer_count),
+             reinterpret_cast<va_list *>(args)) != 0;
+}
 
+static LPARAM AppWorkCaptionId(FL_AppCtx *c) {
+  const FL_AppState state = c->app_state.load(std::memory_order_acquire);
   LPARAM cap_id;
-  if (c->cancelled || c->app_state == APP_CANCELLED) {
+  if (c->cancelled.load(std::memory_order_acquire) ||
+      state == APP_CANCELLED) {
     cap_id = IDS_WORK_CANCELLING;
   } else {
-    cap_id = c->app_state;
+    cap_id = state;
+  }
+  return cap_id;
+}
+
+static void AppRefreshWorkStatus(FL_AppCtx *c) {
+  if (c->work_hwnd == nullptr)
+    return;
+
+  const LPARAM cap_id = AppWorkCaptionId(c);
+  if (!c->work_status_initialized || c->work_caption_id != cap_id) {
+    SendMessage(
+        c->work_hwnd, TDM_SET_ELEMENT_TEXT, TDE_MAIN_INSTRUCTION, cap_id);
+    c->work_caption_id = cap_id;
   }
 
-  SendMessage(c->work_hwnd, TDM_SET_ELEMENT_TEXT, TDE_MAIN_INSTRUCTION, cap_id);
-  SendMessage(
-      c->work_hwnd, TDM_SET_ELEMENT_TEXT, TDE_CONTENT,
-      reinterpret_cast<LPARAM>(c->status_txt));
+  if (!AppFormatStatus(c, c->status_txt, _countof(c->status_txt))) {
+    return;
+  }
+  if (!c->work_status_initialized ||
+      wcscmp(c->status_txt, c->work_status_txt) != 0) {
+    SendMessage(
+        c->work_hwnd, TDM_SET_ELEMENT_TEXT, TDE_CONTENT,
+        reinterpret_cast<LPARAM>(c->status_txt));
+    wcscpy_s(
+        c->work_status_txt, _countof(c->work_status_txt), c->status_txt);
+  }
+  c->work_status_initialized = 1;
+}
 
-  return 0;
+static void AppStopCacheWorker(FL_AppCtx *c) {
+  if (c->thread_cache == nullptr)
+    return;
+  SetEvent(c->evt_stop_cache);
+  if (WaitForSingleObject(c->thread_cache, 1000) != WAIT_OBJECT_0) {
+    TerminateThread(c->thread_cache, 2);
+  }
+  CloseHandle(c->thread_cache);
+  c->thread_cache = nullptr;
+}
+
+static int AppBuildMissingText(FL_AppCtx *c) {
+  c->missing_summary.clear();
+  c->missing_text.clear();
+  try {
+    wchar_t summary[256] = {};
+    const DWORD_PTR count =
+        static_cast<DWORD_PTR>(c->missing_fonts.size());
+    DWORD_PTR args[] = {count};
+    if (FormatMessage(
+            FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY,
+            ResLoadString(c->hInst, IDS_MISSING_FONT_CONTENT), 0, 0, summary,
+            _countof(summary), reinterpret_cast<va_list *>(args)) == 0) {
+      return 0;
+    }
+    c->missing_summary.assign(summary);
+    for (const auto &face : c->missing_fonts) {
+      std::wstring face_w;
+      if (!Utf8ToUtf16(face.c_str(), &face_w))
+        return 0;
+      c->missing_text.append(L"- ");
+      c->missing_text.append(face_w);
+      c->missing_text.push_back(L'\n');
+    }
+    if (!c->missing_text.empty())
+      c->missing_text.pop_back();
+  } catch (const std::bad_alloc &) {
+    c->missing_summary.clear();
+    c->missing_text.clear();
+    return 0;
+  }
+
+  c->dlg_missing.pszContent = c->missing_summary.c_str();
+  c->dlg_missing.pszExpandedInformation = c->missing_text.c_str();
+  return 1;
+}
+
+static int AppNavigateDone(HWND hWnd, FL_AppCtx *c, int font_changed) {
+  if (AppBuildLog(c)) {
+    c->dlg_done.pszExpandedInformation = c->log.c_str();
+  } else {
+    c->dlg_done.pszExpandedInformation = nullptr;
+  }
+  AppFormatStatus(c, c->status_txt, _countof(c->status_txt));
+  c->dlg_done.pszContent = c->status_txt;
+  if (font_changed)
+    PostMessage(HWND_BROADCAST, WM_FONTCHANGE, 0, 0);
+  SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_done);
+  return 1;
 }
 
 static DWORD WINAPI app_worker(LPVOID param) {
   auto c = static_cast<FL_AppCtx *>(param);
+  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
   int r = FL_OK;
   SPDLOG_INFO("AppWorker start");
-  while (r == FL_OK && !c->cancelled && c->app_state != APP_DONE) {
+  while (
+      r == FL_OK && !c->cancelled && c->app_state != APP_DONE &&
+      c->app_state != APP_CONFIRM_MISSING) {
     switch (c->app_state) {
     case APP_LOAD_SUB: {
       SPDLOG_INFO("State: APP_LOAD_SUB");
-      if (MOCK_SUB_PATH) {
-        r = fl_add_subs(&c->loader, nullptr);
-        if (r == FL_OK) {
-          AddSubtitleFileToLoaded(c, nullptr);
-        }
+      if (c->incremental_load)
+        AppStopCacheWorker(c);
+      if (!AppBeginSubtitleBatch(c)) {
+        r = FL_OUT_OF_MEMORY;
+        break;
       }
-      for (int i = 1; i < c->argc && r == FL_OK; i++) {
-        r = fl_add_subs(&c->loader, c->argv[i]);
-        if (r == FL_OK) {
-          AddSubtitleFileToLoaded(c, c->argv[i]);
+      if (!c->pending_paths.empty()) {
+        for (const auto &path : c->pending_paths) {
+          if (r != FL_OK)
+            break;
+          r = AppAddSubtitleRoot(c, path.c_str());
+        }
+      } else {
+        if (MOCK_SUB_PATH) {
+          r = AppAddSubtitleRoot(c, MOCK_SUB_PATH);
+        }
+        for (int i = 1; i < c->argc && r == FL_OK; i++) {
+          r = AppAddSubtitleRoot(c, c->argv[i]);
         }
       }
       SPDLOG_INFO("APP_LOAD_SUB done, r={}", r);
-      c->app_state = APP_LOAD_CACHE;
+      if (r == FL_OK) {
+        c->app_state =
+            c->incremental_load ? APP_CHECK_FONT : APP_LOAD_CACHE;
+      }
       break;
     }
     case APP_LOAD_CACHE: {
@@ -410,7 +480,7 @@ static DWORD WINAPI app_worker(LPVOID param) {
       if (stat.num_face == 0) {
         c->app_state = APP_SCAN_FONT;
       } else {
-        c->app_state = APP_LOAD_FONT;
+        c->app_state = APP_CHECK_FONT;
       }
       SPDLOG_INFO("APP_LOAD_CACHE done, faces={}", stat.num_face);
       break;
@@ -421,8 +491,27 @@ static DWORD WINAPI app_worker(LPVOID param) {
               &c->loader, c->font_path.c_str(), nullptr, kBlackFile) == FL_OK) {
         fl_save_cache(&c->loader, kCacheFile);
       }
-      c->app_state = APP_LOAD_FONT;
+      c->app_state = APP_CHECK_FONT;
       SPDLOG_INFO("APP_SCAN_FONT done");
+      break;
+    }
+    case APP_CHECK_FONT: {
+      SPDLOG_INFO("State: APP_CHECK_FONT");
+      const size_t first_font =
+          c->batch_active ? c->batch_first_font : 0;
+      r = fl_find_missing_fonts(
+          &c->loader, first_font, &c->missing_fonts);
+      if (r == FL_OK) {
+        if (c->missing_fonts.empty()) {
+          AppCommitSubtitleBatch(c);
+          c->app_state = APP_LOAD_FONT;
+        } else {
+          c->app_state = APP_CONFIRM_MISSING;
+        }
+      }
+      SPDLOG_INFO(
+          "APP_CHECK_FONT done, r={} missing={}", r,
+          c->missing_fonts.size());
       break;
     }
     case APP_LOAD_FONT: {
@@ -440,6 +529,7 @@ static DWORD WINAPI app_worker(LPVOID param) {
     }
     case APP_UNLOAD_FONT: {
       SPDLOG_INFO("State: APP_UNLOAD_FONT");
+      AppStopCacheWorker(c);
       fl_unload_fonts(&c->loader);
       if (c->req_exit) {
         c->cancelled = 1;
@@ -466,6 +556,7 @@ static DWORD WINAPI app_worker(LPVOID param) {
 
 static DWORD WINAPI AppCacheWorker(LPVOID param) {
   auto c = static_cast<FL_AppCtx *>(param);
+  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 
   while (true) {
     fl_cache_fonts(&c->loader, c->evt_stop_cache);
@@ -483,9 +574,18 @@ static HRESULT CALLBACK DlgWorkProc(
     LONG_PTR dwRefData) {
   auto c = (FL_AppCtx *)dwRefData;
   int navigated = 0;
+  int refresh_status = 0;
   if (uNotification == TDN_CREATED || uNotification == TDN_NAVIGATED) {
     c->work_hwnd = hWnd;
+    c->work_status_initialized = 0;
+    c->work_status_txt[0] = L'\0';
+    c->work_caption_id = 0;
     SendMessage(hWnd, TDM_SET_PROGRESS_BAR_MARQUEE, TRUE, 0);
+    if (c->taskbar_list3) {
+      c->taskbar_list3->lpVtbl->SetProgressState(
+          c->taskbar_list3, hWnd, TBPF_INDETERMINATE);
+    }
+    refresh_status = 1;
 
     if (c->thread_load != nullptr) {
       DWORD r = WaitForSingleObject(c->thread_load, 0);
@@ -512,6 +612,7 @@ static HRESULT CALLBACK DlgWorkProc(
       if (!c->req_exit) {
         c->cancelled = 1;
         fl_cancel(&c->loader);  // signal cancel event
+        refresh_status = 1;
       }
     }
   } else if (uNotification == TDN_TIMER) {
@@ -524,20 +625,22 @@ static HRESULT CALLBACK DlgWorkProc(
         c->taskbar_list3->lpVtbl->SetProgressState(
             c->taskbar_list3, hWnd, TBPF_NOPROGRESS);
       }
-      if (c->app_state == APP_DONE) {
+      if (c->app_state == APP_CONFIRM_MISSING) {
+        if (AppBuildMissingText(c)) {
+          SendMessage(
+              hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_missing);
+          navigated = 1;
+        } else {
+          TaskDialog(
+              hWnd, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER), L"Error...",
+              nullptr, TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
+          PostMessage(hWnd, WM_CLOSE, 0, 0);
+        }
+      } else if (c->app_state == APP_DONE) {
         // worker exited without error...
         if (!c->cancelled) {
           // and has not been cancelled
-          if (AppBuildLog(c)) {
-            c->dlg_done.pszExpandedInformation = c->log.c_str();
-          } else {
-            c->dlg_done.pszExpandedInformation = nullptr;
-          }
-          AppUpdateStatus(c);
-          c->dlg_done.pszContent = c->status_txt;
-          PostMessage(HWND_BROADCAST, WM_FONTCHANGE, 0, 0);
-          SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_done);
-          navigated = 1;
+          navigated = AppNavigateDone(hWnd, c, 1);
         } else {
           // worker done, then cancelled before timer,
           // work again to continue cancellation routine
@@ -554,15 +657,40 @@ static HRESULT CALLBACK DlgWorkProc(
         PostMessage(hWnd, WM_CLOSE, 0, 0);
       }
     } else {
-      // work in progress
-      if (c->taskbar_list3) {
-        c->taskbar_list3->lpVtbl->SetProgressState(
-            c->taskbar_list3, hWnd, TBPF_INDETERMINATE);
-      }
+      refresh_status = 1;
     }
   }
-  if (!navigated)
-    AppUpdateStatus(c);
+  if (!navigated && refresh_status)
+    AppRefreshWorkStatus(c);
+  return S_FALSE;
+}
+
+static HRESULT CALLBACK DlgMissingProc(
+    HWND hWnd,
+    UINT uNotification,
+    WPARAM wParam,
+    LPARAM lParam,
+    LONG_PTR dwRefData) {
+  auto c = reinterpret_cast<FL_AppCtx *>(dwRefData);
+  if (uNotification != TDN_BUTTON_CLICKED)
+    return S_OK;
+
+  if (wParam == ID_BTN_CONTINUE_LOAD) {
+    AppCommitSubtitleBatch(c);
+    c->missing_fonts.clear();
+    c->app_state = APP_LOAD_FONT;
+    SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
+    return S_FALSE;
+  }
+  if (wParam == IDCANCEL) {
+    AppRollbackSubtitleBatch(c);
+    c->missing_fonts.clear();
+    c->incremental_load = 0;
+    c->app_state = APP_DONE;
+    c->suppress_help_once = 1;
+    AppNavigateDone(hWnd, c, 0);
+    return S_FALSE;
+  }
   return S_FALSE;
 }
 
@@ -578,6 +706,166 @@ static HRESULT CALLBACK DlgHelpProc(
     c->show_shortcut = 1;
   }
   return S_OK;
+}
+
+typedef struct {
+  FL_AppCtx *app;
+  const wchar_t *summary;
+  const wchar_t *details;
+} FL_DuplicateDialogData;
+
+static INT_PTR CALLBACK DuplicateDialogProc(
+    HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+  if (message == WM_INITDIALOG) {
+    auto data = reinterpret_cast<FL_DuplicateDialogData *>(lParam);
+    SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data));
+    SetWindowText(
+        hWnd, ResLoadString(data->app->hInst, IDS_DUPLICATE_FONT));
+    SetDlgItemText(hWnd, IDC_DUPLICATE_SUMMARY, data->summary);
+    SetDlgItemText(
+        hWnd, IDCANCEL, ResLoadString(data->app->hInst, IDS_CLOSE));
+
+    HWND list = GetDlgItem(hWnd, IDC_DUPLICATE_LIST);
+    SendMessage(list, WM_SETREDRAW, FALSE, 0);
+    SendMessage(list, EM_EXLIMITTEXT, 0, static_cast<LPARAM>(-1));
+    SetWindowText(list, data->details);
+    SendMessage(list, EM_SETSEL, 0, 0);
+    SendMessage(list, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(list, nullptr, TRUE);
+    return TRUE;
+  }
+  if (message == WM_SIZE && wParam != SIZE_MINIMIZED) {
+    const int width = LOWORD(lParam);
+    const int height = HIWORD(lParam);
+    HWND summary = GetDlgItem(hWnd, IDC_DUPLICATE_SUMMARY);
+    HWND list = GetDlgItem(hWnd, IDC_DUPLICATE_LIST);
+    HWND close = GetDlgItem(hWnd, IDCANCEL);
+    if (summary && list && close) {
+      MoveWindow(summary, 10, 10, width - 20, 38, TRUE);
+      MoveWindow(list, 10, 52, width - 20, height - 97, TRUE);
+      MoveWindow(close, width - 90, height - 35, 80, 25, TRUE);
+    }
+    return TRUE;
+  }
+  if (message == WM_GETMINMAXINFO) {
+    auto limits = reinterpret_cast<MINMAXINFO *>(lParam);
+    limits->ptMinTrackSize.x = 500;
+    limits->ptMinTrackSize.y = 350;
+    return TRUE;
+  }
+  if (message == WM_COMMAND && LOWORD(wParam) == IDCANCEL) {
+    EndDialog(hWnd, IDCANCEL);
+    return TRUE;
+  }
+  if (message == WM_CLOSE) {
+    EndDialog(hWnd, IDCANCEL);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static void AppShowDuplicateFonts(HWND hWnd, FL_AppCtx *c) {
+  std::wstring detail_text;
+  std::wstring summary;
+  try {
+    size_t reserve_chars = 256;
+    for (const auto &path : c->loader.duplicate_font_files)
+      reserve_chars += path.size() + 4;
+    for (const auto &group : c->loader.duplicate_font_versions) {
+      reserve_chars += group.name.size() + 4;
+      for (const auto &font : group.fonts)
+        reserve_chars += font.version.size() + font.path.size() + 8;
+    }
+    detail_text.reserve(reserve_chars);
+
+    if (!c->loader.duplicate_font_files.empty()) {
+      detail_text.append(ResLoadString(c->hInst, IDS_DUPLICATE_IDENTICAL));
+      detail_text.append(L"\r\n");
+      for (const auto &path : c->loader.duplicate_font_files) {
+        std::wstring path_w;
+        if (!Utf8ToUtf16(path.c_str(), &path_w))
+          continue;
+        detail_text.append(L"- ");
+        detail_text.append(path_w);
+        detail_text.append(L"\r\n");
+      }
+    }
+
+    if (!c->loader.duplicate_font_versions.empty()) {
+      if (!detail_text.empty())
+        detail_text.append(L"\r\n");
+      detail_text.append(ResLoadString(c->hInst, IDS_DUPLICATE_VERSIONS));
+      detail_text.append(L"\r\n");
+      for (const auto &group : c->loader.duplicate_font_versions) {
+        std::wstring name_w;
+        if (!Utf8ToUtf16(group.name.c_str(), &name_w))
+          continue;
+        detail_text.append(name_w);
+        detail_text.append(L"\r\n");
+        for (const auto &font : group.fonts) {
+          std::wstring version_w;
+          std::wstring path_w;
+          if (!font.version.empty()) {
+            if (!Utf8ToUtf16(font.version.c_str(), &version_w))
+              continue;
+          } else {
+            version_w =
+                ResLoadString(c->hInst, IDS_DUPLICATE_UNKNOWN_VERSION);
+          }
+          if (!Utf8ToUtf16(font.path.c_str(), &path_w))
+            continue;
+          detail_text.append(L"  [");
+          detail_text.append(version_w);
+          detail_text.append(L"] ");
+          detail_text.append(path_w);
+          detail_text.append(L"\r\n");
+        }
+      }
+    }
+    if (!detail_text.empty())
+      detail_text.resize(detail_text.size() - 2);
+
+    if (!detail_text.empty()) {
+      wchar_t buffer[256] = {};
+      DWORD_PTR args[] = {
+          static_cast<DWORD_PTR>(c->loader.duplicate_font_files.size()),
+          static_cast<DWORD_PTR>(c->loader.duplicate_font_versions.size())};
+      if (FormatMessage(
+              FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY,
+              ResLoadString(c->hInst, IDS_DUPLICATE_FONT_CONTENT), 0, 0,
+              buffer, _countof(buffer),
+              reinterpret_cast<va_list *>(args)) != 0) {
+        summary.assign(buffer);
+      }
+    }
+  } catch (const std::bad_alloc &) {
+    detail_text.clear();
+    summary.clear();
+  }
+
+  if (detail_text.empty() || summary.empty()) {
+    TaskDialog(
+        hWnd, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER),
+        MAKEINTRESOURCE(IDS_DUPLICATE_FONT),
+        MAKEINTRESOURCE(IDS_DUPLICATE_FONT_NONE), TDCBF_CLOSE_BUTTON,
+        TD_INFORMATION_ICON, nullptr);
+    return;
+  }
+
+  HMODULE rich_edit = LoadLibraryW(L"Msftedit.dll");
+  if (rich_edit == nullptr) {
+    TaskDialog(
+        hWnd, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER),
+        MAKEINTRESOURCE(IDS_DUPLICATE_FONT), summary.c_str(),
+        TDCBF_CLOSE_BUTTON, TD_INFORMATION_ICON, nullptr);
+    return;
+  }
+  FL_DuplicateDialogData data = {
+      c, summary.c_str(), detail_text.c_str()};
+  DialogBoxParam(
+      c->hInst, MAKEINTRESOURCE(IDD_DUPLICATE_FONT), hWnd,
+      DuplicateDialogProc, reinterpret_cast<LPARAM>(&data));
+  FreeLibrary(rich_edit);
 }
 
 static HRESULT CALLBACK DlgDoneButtonDispatch(
@@ -598,11 +886,6 @@ static HRESULT CALLBACK DlgDoneButtonDispatch(
       c->req_exit = 1;
     }
     SetEvent(c->evt_stop_cache);
-    if (WaitForSingleObject(c->thread_cache, 1000) != WAIT_OBJECT_0) {
-      TerminateThread(c->thread_cache, 2);
-    }
-    CloseHandle(c->thread_cache);
-    c->thread_cache = nullptr;
     c->app_state = APP_UNLOAD_FONT;
     SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
     return S_FALSE;
@@ -631,6 +914,10 @@ static HRESULT CALLBACK DlgDoneButtonDispatch(
   }
   case ID_BTN_EXPORT: {
     ExportLoadedFonts(hWnd, c);
+    return S_FALSE;
+  }
+  case ID_BTN_DUPLICATE_FONT: {
+    AppShowDuplicateFonts(hWnd, c);
     return S_FALSE;
   }
   case ID_BTN_HELP: {
@@ -667,14 +954,15 @@ static HRESULT CALLBACK DlgDoneProc(
     LONG_PTR dwRefData) {
   auto c = (FL_AppCtx *)dwRefData;
   if (uNotification == TDN_NAVIGATED) {
-    c->thread_cache = nullptr;
-
     FS_Stat stat = {0};
     fs_stat(c->loader.font_set, &stat);
+    const int suppress_help = c->suppress_help_once;
+    c->suppress_help_once = 0;
     if (c->loader.num_sub_font.load(std::memory_order_relaxed) == 0 ||
         stat.num_face == 0) {
       EnableMenuItem(c->btn_menu, ID_BTN_EXPORT, MF_BYCOMMAND | MF_GRAYED);
-      AppHelpUsage(c, hWnd);
+      if (!suppress_help)
+        AppHelpUsage(c, hWnd);
     } else {
       DWORD thread_id;
       EnableMenuItem(c->btn_menu, ID_BTN_EXPORT, MF_BYCOMMAND | MF_ENABLED);
@@ -709,6 +997,9 @@ static HRESULT CALLBACK DlgDoneProc(
 static const TASKDIALOG_BUTTON kDlgDoneButtons[] = {
     {ID_BTN_MENU, MAKEINTRESOURCE(IDS_MENU)}};
 
+static const TASKDIALOG_BUTTON kDlgMissingButtons[] = {
+    {ID_BTN_CONTINUE_LOAD, MAKEINTRESOURCE(IDS_CONTINUE_LOAD)}};
+
 static TASKDIALOGCONFIG MakeDlgWorkTemplate() {
   TASKDIALOGCONFIG cfg = {};
   cfg.cbSize = sizeof cfg;
@@ -718,6 +1009,25 @@ static TASKDIALOGCONFIG MakeDlgWorkTemplate() {
       TDF_SHOW_MARQUEE_PROGRESS_BAR | TDF_CALLBACK_TIMER | TDF_SIZE_TO_CONTENT;
   cfg.pszMainInstruction = L"";
   cfg.pfCallback = DlgWorkProc;
+  return cfg;
+}
+
+static TASKDIALOGCONFIG MakeDlgMissingTemplate() {
+  TASKDIALOGCONFIG cfg = {};
+  cfg.cbSize = sizeof cfg;
+  cfg.pszWindowTitle = MAKEINTRESOURCE(IDS_APP_NAME_VER);
+  cfg.pszMainIcon = TD_WARNING_ICON;
+  cfg.pszMainInstruction = MAKEINTRESOURCE(IDS_MISSING_FONT);
+  cfg.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+  cfg.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_EXPANDED_BY_DEFAULT |
+                TDF_SIZE_TO_CONTENT;
+  cfg.pszExpandedControlText = MAKEINTRESOURCE(IDS_MISSING_COLLAPSE);
+  cfg.pszCollapsedControlText = MAKEINTRESOURCE(IDS_MISSING_EXPAND);
+  cfg.pfCallback = DlgMissingProc;
+  cfg.cButtons = static_cast<UINT>(
+      sizeof(kDlgMissingButtons) / sizeof(kDlgMissingButtons[0]));
+  cfg.pButtons = kDlgMissingButtons;
+  cfg.nDefaultButton = IDCANCEL;
   return cfg;
 }
 
@@ -753,6 +1063,7 @@ static TASKDIALOGCONFIG MakeDlgHelpTemplate() {
 }
 
 static const TASKDIALOGCONFIG kDlgWorkTemplate = MakeDlgWorkTemplate();
+static const TASKDIALOGCONFIG kDlgMissingTemplate = MakeDlgMissingTemplate();
 static const TASKDIALOGCONFIG kDlgDoneTemplate = MakeDlgDoneTemplate();
 static const TASKDIALOGCONFIG kDlgHelpTemplate = MakeDlgHelpTemplate();
 
@@ -764,6 +1075,10 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->dlg_work = kDlgWorkTemplate;
   c->dlg_work.hInstance = hInst;
   c->dlg_work.lpCallbackData = (LONG_PTR)c;
+
+  c->dlg_missing = kDlgMissingTemplate;
+  c->dlg_missing.hInstance = hInst;
+  c->dlg_missing.lpCallbackData = (LONG_PTR)c;
 
   c->dlg_done = kDlgDoneTemplate;
   c->dlg_done.hInstance = hInst;
@@ -805,7 +1120,26 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   c->shortcut.sendto_str_id = IDS_SENDTO;
   c->shortcut.path = c->full_exe_path.c_str();
   c->app_state = APP_LOAD_SUB;
+  c->cancelled = 0;
+  c->req_exit = 0;
+  c->status_txt[0] = L'\0';
+  c->work_status_txt[0] = L'\0';
+  c->work_caption_id = 0;
+  c->work_status_initialized = 0;
   c->incremental_load = 0;  // Initialize flag
+  c->batch_active = 0;
+  c->batch_sub_fonts_size = 0;
+  c->batch_num_sub = 0;
+  c->batch_num_sub_font = 0;
+  c->batch_first_font = 0;
+  c->suppress_help_once = 0;
+  c->pending_paths.clear();
+  c->batch_loaded_roots.clear();
+  c->batch_sub_font_set.clear();
+  c->batch_loaded_sub_files.clear();
+  c->missing_fonts.clear();
+  c->missing_summary.clear();
+  c->missing_text.clear();
   c->drop_guard = 0;
   c->last_drop_tick = 0;
   c->drop_debounce_ms = 250;

@@ -32,6 +32,21 @@ STRINGTABLE
   IDS_SHORTCUT_ADD_SENDTO "Add to SendTo"
   IDS_SHORTCUT_DEL_SENDTO "Remove from SendTo"
   IDS_MENU "&Menu"
+  IDS_WORK_CHECK "Checking fonts"
+  IDS_MISSING_FONT "Missing fonts"
+  IDS_MISSING_FONT_CONTENT "%1!u! fonts could not be found. Cancel this batch, or continue loading the remaining available fonts."
+  IDS_CONTINUE_LOAD "&Continue loading"
+  IDS_MISSING_EXPAND "Show missing fonts"
+  IDS_MISSING_COLLAPSE "Hide missing fonts"
+  IDS_DUPLICATE_FONT "Font deduplication"
+  IDS_DUPLICATE_FONT_CONTENT "%1!u! duplicate files with identical contents and %2!u! font names with differing versions were found. All paths are relative to the application's font directory."
+  IDS_DUPLICATE_FONT_NONE "The index contains neither identical duplicate files nor same-name fonts with differing versions."
+  IDS_DUPLICATE_EXPAND "Show duplicate font paths"
+  IDS_DUPLICATE_COLLAPSE "Hide duplicate font paths"
+  IDS_DUPLICATE_IDENTICAL "Identical contents (removable copies)"
+  IDS_DUPLICATE_VERSIONS "Different versions of the same font name"
+  IDS_DUPLICATE_UNKNOWN_VERSION "Unknown version"
+  IDS_CLOSE "Close"
 }
 
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
@@ -41,6 +56,7 @@ IDR_BTN_MENU MENU
   {
     MENUITEM "&Rebuild index", ID_BTN_RESCAN
     MENUITEM "&Export fonts", ID_BTN_EXPORT
+    MENUITEM "Font &deduplication", ID_BTN_DUPLICATE_FONT
     MENUITEM SEPARATOR
     MENUITEM "&Help", ID_BTN_HELP
   }

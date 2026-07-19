@@ -1,13 +1,16 @@
 #include "font_loader.h"
 
 #include <Windows.h>
-#include <bcrypt.h>
 
+#include <chrono>
 #include <climits>
+#include <cstring>
 #include <string>
 #include <new>
 #include <thread>
 #include <atomic>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "ass_string.h"
@@ -19,9 +22,9 @@
 #include "utf.h"
 
 #include <tlx/sort/parallel_mergesort.hpp>
+#include <blockingconcurrentqueue.h>
 #include <concurrentqueue.h>
-
-#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#include <xxhash.h>
 
 static std::string fl_utf16_to_utf8_safe(const wchar_t *path) {
   if (path == nullptr)
@@ -30,6 +33,13 @@ static std::string fl_utf16_to_utf8_safe(const wchar_t *path) {
   if (!Utf16ToUtf8(path, &out))
     return std::string();
   return out;
+}
+
+static size_t fl_background_sort_threads() {
+  const unsigned int hw = std::thread::hardware_concurrency();
+  if (hw <= 2u)
+    return 1u;
+  return (hw - 1u < 4u) ? hw - 1u : 4u;
 }
 
 static std::string fl_font_key(const char *font, size_t cch) {
@@ -64,22 +74,12 @@ int fl_init(FL_LoaderCtx *c, allocator_t *alloc) {
   c->num_scan_file.store(0, std::memory_order_relaxed);
   c->num_scan_face.store(0, std::memory_order_relaxed);
   c->loaded_font.clear();
+  c->duplicate_font_files.clear();
+  c->duplicate_font_versions.clear();
   c->event_cancel = nullptr;
-  c->hash_alg = nullptr;
-
-  do {
-    c->event_cancel = CreateEvent(nullptr, TRUE, FALSE, nullptr);
-    if (!c->event_cancel) {
-      r = FL_OS_ERROR;
-      break;
-    }
-    const NTSTATUS status = BCryptOpenAlgorithmProvider(
-        &c->hash_alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0);
-    if (!NT_SUCCESS(status)) {
-      r = FL_OS_ERROR;
-      break;
-    }
-  } while (0);
+  c->event_cancel = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+  if (!c->event_cancel)
+    r = FL_OS_ERROR;
 
   if (r != FL_OK) {
     SPDLOG_ERROR("fl_init failed, err={}", r);
@@ -95,11 +95,9 @@ int fl_free(FL_LoaderCtx *c) {
     CloseHandle(c->event_cancel);
     c->event_cancel = nullptr;
   }
-  if (c->hash_alg) {
-    BCryptCloseAlgorithmProvider(c->hash_alg, 0);
-    c->hash_alg = nullptr;
-  }
   c->loaded_font.clear();
+  c->duplicate_font_files.clear();
+  c->duplicate_font_versions.clear();
   c->sub_fonts.clear();
   c->sub_font_set.clear();
   c->loaded_sub_files.clear();
@@ -315,7 +313,7 @@ typedef struct {
 typedef struct {
   FL_LoaderCtx *loader;
   size_t base_len;
-  moodycamel::ConcurrentQueue<FL_FontScanItem> *queue;
+  moodycamel::BlockingConcurrentQueue<FL_FontScanItem> *queue;
   std::atomic<int> *error;
   std::atomic<bool> *cancel;
 } FL_FontScanCtx;
@@ -323,8 +321,10 @@ typedef struct {
 static int
 fl_walk_font_enqueue(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   FL_FontScanCtx *ctx = (FL_FontScanCtx *)arg;
-  if (ctx->cancel->load())
-    return FL_OK;
+  if (ctx->cancel->load()) {
+    const int r = ctx->error->load();
+    return r == FL_OK ? FL_OS_ERROR : r;
+  }
 
   const int r = fl_check_cancel(ctx->loader);
   if (r != FL_OK) {
@@ -359,24 +359,23 @@ fl_walk_font_enqueue(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
 
 static int fl_scan_fonts_mt(FL_LoaderCtx *c) {
   SPDLOG_INFO("fl_scan_fonts_mt start");
-  moodycamel::ConcurrentQueue<FL_FontScanItem> work_queue;
+  moodycamel::BlockingConcurrentQueue<FL_FontScanItem> work_queue;
   moodycamel::ConcurrentQueue<FL_FontScanResult> result_queue;
   std::atomic<bool> cancel(false);
   std::atomic<bool> done(false);
   std::atomic<int> error(FL_OK);
 
   const unsigned int hw = std::thread::hardware_concurrency();
-  unsigned int worker_count = (hw == 0) ? 4u : hw;
-  if (worker_count < 2u)
-    worker_count = 2u;
-  if (worker_count > 12u)
-    worker_count = 12u;
+  unsigned int worker_count = (hw > 1u) ? hw - 1u : 1u;
+  if (worker_count > 8u)
+    worker_count = 8u;
   SPDLOG_INFO("fl_scan_fonts_mt workers={}", worker_count);
 
   std::vector<std::thread> workers;
   workers.reserve(worker_count);
   for (unsigned int i = 0; i < worker_count; i++) {
     workers.emplace_back([&]() {
+      SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
       FL_FontScanItem item;
       while (!cancel.load()) {
         const int cancel_check = fl_check_cancel(c);
@@ -385,10 +384,10 @@ static int fl_scan_fonts_mt(FL_LoaderCtx *c) {
           cancel.store(true);
           break;
         }
-        if (!work_queue.try_dequeue(item)) {
+        if (!work_queue.wait_dequeue_timed(
+                item, std::chrono::milliseconds(25))) {
           if (done.load())
             break;
-          std::this_thread::yield();
           continue;
         }
 
@@ -493,6 +492,133 @@ static void fl_blacklist_load(FL_LoaderCtx *c, const wchar_t *filename) {
   c->alloc->alloc(content, 0, c->alloc->arg);
 }
 
+struct FL_Hash128Key {
+  uint64_t low;
+  uint64_t high;
+
+  bool operator==(const FL_Hash128Key &other) const {
+    return low == other.low && high == other.high;
+  }
+};
+
+struct FL_Hash128KeyHasher {
+  size_t operator()(const FL_Hash128Key &key) const {
+    return static_cast<size_t>(
+        key.low ^ (key.high + 0x9e3779b97f4a7c15ULL + (key.low << 6) +
+                   (key.low >> 2)));
+  }
+};
+
+typedef struct {
+  FL_Hash128Key hash;
+  std::string path;
+} FL_IndexedFile;
+
+typedef struct {
+  std::string name;
+  std::vector<FL_FontVersionPath> fonts;
+} FL_IndexedName;
+
+typedef struct {
+  std::unordered_map<std::string, FL_IndexedFile> files;
+  std::unordered_map<std::string, FL_IndexedName> names;
+} FL_FontAnalysisCtx;
+
+static int
+fl_collect_font_index(const FS_Index *info, void *param) {
+  auto ctx = static_cast<FL_FontAnalysisCtx *>(param);
+  if (info == nullptr || info->tag == nullptr || info->face == nullptr)
+    return FL_OK;
+  try {
+    ctx->files.emplace(
+        info->tag,
+        FL_IndexedFile{
+            {info->hash_low64, info->hash_high64}, info->tag});
+
+    const std::string name_key =
+        fl_font_key(info->face, strlen(info->face));
+    if (name_key.empty())
+      return FL_OK;
+    auto &name = ctx->names[name_key];
+    if (name.name.empty())
+      name.name = info->face;
+    const std::string version = info->ver ? info->ver : "";
+    for (const auto &font : name.fonts) {
+      if (font.version == version && font.path == info->tag)
+        return FL_OK;
+    }
+    name.fonts.push_back({version, info->tag});
+  } catch (const std::bad_alloc &) {
+    return FL_OUT_OF_MEMORY;
+  }
+  return FL_OK;
+}
+
+static void fl_analyze_font_index(FL_LoaderCtx *c) {
+  c->duplicate_font_files.clear();
+  c->duplicate_font_versions.clear();
+  if (c->font_set == nullptr)
+    return;
+
+  try {
+    FL_FontAnalysisCtx index;
+    if (fs_walk_index(c->font_set, fl_collect_font_index, &index) != FL_OK)
+      return;
+
+    std::unordered_map<
+        FL_Hash128Key,
+        std::vector<std::string>,
+        FL_Hash128KeyHasher>
+        hash_groups;
+    hash_groups.reserve(index.files.size());
+    for (const auto &item : index.files)
+      hash_groups[item.second.hash].push_back(item.second.path);
+
+    for (auto &item : hash_groups) {
+      auto &paths = item.second;
+      if (paths.size() < 2)
+        continue;
+      std::sort(paths.begin(), paths.end());
+      c->duplicate_font_files.insert(
+          c->duplicate_font_files.end(), paths.begin() + 1, paths.end());
+    }
+    std::sort(
+        c->duplicate_font_files.begin(), c->duplicate_font_files.end());
+
+    for (auto &item : index.names) {
+      auto &name = item.second;
+      std::unordered_set<std::string> versions;
+      for (const auto &font : name.fonts)
+        versions.insert(font.version);
+      if (versions.size() < 2)
+        continue;
+      std::sort(
+          name.fonts.begin(), name.fonts.end(),
+          [](const FL_FontVersionPath &a, const FL_FontVersionPath &b) {
+            if (a.version != b.version)
+              return a.version < b.version;
+            return a.path < b.path;
+          });
+      c->duplicate_font_versions.push_back(
+          {std::move(name.name), std::move(name.fonts)});
+    }
+    std::sort(
+        c->duplicate_font_versions.begin(),
+        c->duplicate_font_versions.end(),
+        [](const FL_FontVersionGroup &a, const FL_FontVersionGroup &b) {
+          return a.name < b.name;
+        });
+  } catch (const std::bad_alloc &) {
+    c->duplicate_font_files.clear();
+    c->duplicate_font_versions.clear();
+    SPDLOG_WARN("Failed to analyze duplicate fonts");
+  }
+
+  SPDLOG_INFO(
+      "Font duplicate analysis: identical_files={} versioned_names={}",
+      c->duplicate_font_files.size(), c->duplicate_font_versions.size());
+}
+
 int fl_scan_fonts(
     FL_LoaderCtx *c,
     const wchar_t *path,
@@ -558,6 +684,7 @@ int fl_scan_fonts(
   if (r == FL_OK) {
     r = fs_build_index(c->font_set);
     fl_blacklist_load(c, black);
+    fl_analyze_font_index(c);
   }
 
   // failed
@@ -569,6 +696,8 @@ int fl_scan_fonts(
   if (r == FL_OK && c->font_set) {
     FS_Stat stat = {0};
     fs_stat(c->font_set, &stat);
+    c->num_scan_file.store(stat.num_file, std::memory_order_release);
+    c->num_scan_face.store(stat.num_face, std::memory_order_release);
     SPDLOG_INFO(
         "fl_scan_fonts done: files={} faces={} r={}", stat.num_file,
         stat.num_face, r);
@@ -663,17 +792,12 @@ static int fl_utf8_casecmp(const char *a, const char *b) {
   return FlStrCmpIW(wa.c_str(), wb.c_str());
 }
 
-static int fl_hash_loaded(FL_LoaderCtx *c, const uint8_t hash[32]) {
+static int fl_hash_loaded(FL_LoaderCtx *c, XXH128_hash_t hash) {
   for (size_t i = 0; i != c->loaded_font.size(); i++) {
     FL_FontMatch *m = &c->loaded_font[i];
-    if (m->flag & FL_LOAD_OK) {
-      uint8_t dif = 0;
-      for (int j = 0; j != 32; j++) {
-        dif |= m->hash[j] ^ hash[j];
-      }
-      if (!dif)
-        return (i > static_cast<size_t>(INT_MAX)) ? -1 : (int)i;
-    }
+    if ((m->flag & FL_LOAD_OK) && m->hash_low64 == hash.low64 &&
+        m->hash_high64 == hash.high64)
+      return (i > static_cast<size_t>(INT_MAX)) ? -1 : (int)i;
   }
   return -1;
 }
@@ -687,50 +811,42 @@ static bool fl_try_push_loaded(FL_LoaderCtx *c, const FL_FontMatch &m) {
   }
 }
 
-static int
-fl_calc_hash(FL_LoaderCtx *c, const void *data, size_t size, uint8_t res[32]) {
-  int ok = 0;
-  NTSTATUS status;
-  BCRYPT_HASH_HANDLE hash = nullptr;
-  void *hash_obj = nullptr;
-  DWORD sz_hash_obj = 0;
-  DWORD sz_data = 0;
-  allocator_t *alloc = c->alloc;
-  if (size > static_cast<size_t>(ULONG_MAX)) {
+int fl_find_missing_fonts(
+    FL_LoaderCtx *c,
+    size_t first_font,
+    std::vector<std::string> *missing) {
+  if (c == nullptr || missing == nullptr || c->font_set == nullptr)
+    return FL_OS_ERROR;
+
+  missing->clear();
+  if (first_font > c->sub_fonts.size())
+    first_font = c->sub_fonts.size();
+
+  try {
+    missing->reserve(c->sub_fonts.size() - first_font);
+    for (size_t i = first_font; i < c->sub_fonts.size(); i++) {
+      const int r = fl_check_cancel(c);
+      if (r != FL_OK)
+        return r;
+
+      const std::string &face = c->sub_fonts[i];
+      if (fl_face_loaded(c, face.c_str()) || IsFontInstalled(face.c_str()))
+        continue;
+
+      FS_Iter it;
+      if (!fs_iter_new(c->font_set, face.c_str(), &it)) {
+        missing->push_back(face);
+      }
+    }
+  } catch (const std::bad_alloc &) {
+    missing->clear();
     return FL_OUT_OF_MEMORY;
   }
-  const ULONG data_len = static_cast<ULONG>(size);
 
-  do {
-    status = BCryptGetProperty(
-        c->hash_alg, BCRYPT_OBJECT_LENGTH, (PBYTE)&sz_hash_obj,
-        sizeof sz_hash_obj, &sz_data, 0);
-    if (!NT_SUCCESS(status))
-      break;
-
-    hash_obj = alloc->alloc(hash_obj, sz_hash_obj, alloc->arg);
-    if (hash_obj == nullptr)
-      break;
-
-    status = BCryptCreateHash(
-        c->hash_alg, &hash, (PUCHAR)hash_obj, sz_hash_obj, nullptr, 0, 0);
-    if (!NT_SUCCESS(status))
-      break;
-
-    status = BCryptHashData(hash, (PBYTE)data, data_len, 0);
-    if (!NT_SUCCESS(status))
-      break;
-
-    status = BCryptFinishHash(hash, res, 32, 0);
-    if (!NT_SUCCESS(status))
-      break;
-
-    ok = 1;
-  } while (0);
-
-  BCryptDestroyHash(hash);
-  alloc->alloc(hash_obj, 0, alloc->arg);
-  return ok ? FL_OK : FL_OS_ERROR;
+  SPDLOG_INFO(
+      "fl_find_missing_fonts done: first={} total={} missing={}", first_font,
+      c->sub_fonts.size(), missing->size());
+  return FL_OK;
 }
 
 static int
@@ -738,7 +854,7 @@ fl_load_file(FL_LoaderCtx *c, const char *face, const char *file, int *dup) {
   int r = FL_OK;
   int candidate;
   memmap_t map = {nullptr};
-  uint8_t hash[32];
+  XXH128_hash_t hash = {};
 
   do {
     try {
@@ -774,9 +890,7 @@ fl_load_file(FL_LoaderCtx *c, const char *face, const char *file, int *dup) {
       break;
     }
 
-    r = fl_calc_hash(c, map.data, map.size, hash);
-    if (r != FL_OK)
-      break;
+    hash = XXH3_128bits(map.data, map.size);
 
     candidate = fl_hash_loaded(c, hash);
     if (candidate != -1) {
@@ -813,13 +927,8 @@ fl_load_file(FL_LoaderCtx *c, const char *face, const char *file, int *dup) {
       m.filename = file;
     else
       m.filename.clear();
-    // copy SHA256 without memcpy
-    uint64_t *src = (uint64_t *)hash;
-    uint64_t *dst = (uint64_t *)m.hash;
-    dst[0] = src[0];
-    dst[1] = src[1];
-    dst[2] = src[2];
-    dst[3] = src[3];
+    m.hash_low64 = hash.low64;
+    m.hash_high64 = hash.high64;
     try {
       c->loaded_font.push_back(m);
     } catch (const std::bad_alloc &) {
@@ -950,7 +1059,8 @@ int fl_load_fonts(FL_LoaderCtx *c) {
         data, data + c->loaded_font.size(),
         [](const FL_FontMatch &a, const FL_FontMatch &b) {
           return fl_load_rec_sort(&a, &b, nullptr) < 0;
-        });
+        },
+        fl_background_sort_threads());
   }
 
   SPDLOG_INFO(
@@ -1044,7 +1154,8 @@ int fl_load_fonts_incremental(FL_LoaderCtx *c) {
         data, data + c->loaded_font.size(),
         [](const FL_FontMatch &a, const FL_FontMatch &b) {
           return fl_load_rec_sort(&a, &b, nullptr) < 0;
-        });
+        },
+        fl_background_sort_threads());
   }
 
   SPDLOG_INFO(

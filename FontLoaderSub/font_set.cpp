@@ -11,13 +11,22 @@
 #include <cctype>
 #include <new>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include <zstd.h>
+#include <xxhash.h>
 
 #include <tlx/sort/parallel_mergesort.hpp>
+
+static size_t fs_background_sort_threads() {
+  const unsigned int hw = std::thread::hardware_concurrency();
+  if (hw <= 2u)
+    return 1u;
+  return (hw - 1u < 4u) ? hw - 1u : 4u;
+}
 
 typedef struct {
   std::string ver;
@@ -30,12 +39,16 @@ typedef struct {
   std::string face;
   std::string ver;
   FS_Format format;
+  uint64_t hash_low64;
+  uint64_t hash_high64;
 } FS_Entry;
 
 struct FS_FontParseResult {
   FS_Format format;
   std::unordered_map<uint32_t, FS_FontAccum> fonts;
   uint32_t count_face;
+  uint64_t hash_low64;
+  uint64_t hash_high64;
 };
 
 struct _FS_Set {
@@ -277,6 +290,9 @@ FS_FontParseResult *fs_parse_font_data(const uint8_t *buf, size_t size) {
   res->format = fmt;
   res->fonts = std::move(ctx.fonts);
   res->count_face = ctx.count_face;
+  const XXH128_hash_t hash = XXH3_128bits(buf, size);
+  res->hash_low64 = hash.low64;
+  res->hash_high64 = hash.high64;
   return res;
 }
 
@@ -310,6 +326,8 @@ int fs_add_parsed_font(
       e.face = face;
       e.ver = font.ver;
       e.format = result->format;
+      e.hash_low64 = result->hash_low64;
+      e.hash_high64 = result->hash_high64;
       s->entries.push_back(e);
     }
   }
@@ -340,6 +358,8 @@ int fs_build_index(FS_Set *s) {
     idx.face = e.face.c_str();
     idx.ver = e.ver.empty() ? nullptr : e.ver.c_str();
     idx.format = e.format;
+    idx.hash_low64 = e.hash_low64;
+    idx.hash_high64 = e.hash_high64;
     s->index_vec.push_back(idx);
   }
 
@@ -349,7 +369,8 @@ int fs_build_index(FS_Set *s) {
         data, data + s->index_vec.size(),
         [](const FS_Index &a, const FS_Index &b) {
           return fs_idx_comp(a, b) < 0;
-        });
+        },
+        fs_background_sort_threads());
   }
 
   s->index = s->index_vec.empty() ? nullptr : s->index_vec.data();
@@ -452,6 +473,17 @@ int fs_iter_next(FS_Iter *it) {
   return 0;
 }
 
+int fs_walk_index(FS_Set *s, FS_WalkIndexCallback cb, void *param) {
+  if (s == nullptr || cb == nullptr)
+    return FL_OS_ERROR;
+  for (const auto &info : s->index_vec) {
+    const int r = cb(&info, param);
+    if (r != FL_OK)
+      return r;
+  }
+  return FL_OK;
+}
+
 int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
   if (out == nullptr)
     return FL_OUT_OF_MEMORY;
@@ -493,7 +525,7 @@ int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
   if (db == nullptr) {
     return FL_CORRUPTED;
   }
-  if (db->version() != 1) {
+  if (db->version() != 2) {
     return FL_UNRECOGNIZED;
   }
 
@@ -519,6 +551,8 @@ int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out) {
       if (entry->ver())
         e.ver.assign(entry->ver()->c_str(), entry->ver()->size());
       e.format = (FS_Format)entry->format();
+      e.hash_low64 = entry->hash_low64();
+      e.hash_high64 = entry->hash_high64();
       s->entries.push_back(e);
     }
   }
@@ -566,13 +600,14 @@ int fs_cache_dump(FS_Set *s, const wchar_t *path) {
     if (!e.ver.empty())
       ver = builder.CreateString(e.ver);
     auto entry = fontloader::CreateFontEntry(
-        builder, tag, face, ver, (fontloader::FontFormat)e.format);
+        builder, tag, face, ver, (fontloader::FontFormat)e.format,
+        e.hash_low64, e.hash_high64);
     entries_vec.push_back(entry);
   }
 
   auto entries = builder.CreateVector(entries_vec);
   auto db = fontloader::CreateFontDb(
-      builder, 1, s->stat.num_file, s->stat.num_face, entries);
+      builder, 2, s->stat.num_file, s->stat.num_face, entries);
   builder.Finish(db, fontloader::FontDbIdentifier());
 
   const size_t src_size = builder.GetSize();

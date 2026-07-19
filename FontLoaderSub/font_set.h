@@ -26,6 +26,8 @@ typedef struct {
   const char *face;
   const char *ver;
   FS_Format format;
+  uint64_t hash_low64;
+  uint64_t hash_high64;
 } FS_Index;
 
 typedef struct {
@@ -61,6 +63,10 @@ int fs_build_index(FS_Set *s);
 int fs_iter_new(FS_Set *s, const char *face, FS_Iter *it);
 
 int fs_iter_next(FS_Iter *it);
+
+typedef int (*FS_WalkIndexCallback)(const FS_Index *info, void *param);
+
+int fs_walk_index(FS_Set *s, FS_WalkIndexCallback cb, void *param);
 
 int fs_cache_load(const wchar_t *path, allocator_t *alloc, FS_Set **out);
 

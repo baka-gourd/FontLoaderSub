@@ -20,8 +20,19 @@ typedef struct {
   FL_MatchFlag flag;
   std::string face;
   std::string filename;
-  uint8_t hash[32];
+  uint64_t hash_low64;
+  uint64_t hash_high64;
 } FL_FontMatch;
+
+typedef struct {
+  std::string version;
+  std::string path;
+} FL_FontVersionPath;
+
+typedef struct {
+  std::string name;
+  std::vector<FL_FontVersionPath> fonts;
+} FL_FontVersionGroup;
 
 typedef struct {
   allocator_t *alloc;
@@ -42,8 +53,10 @@ typedef struct {
   std::atomic<uint32_t> num_scan_face;
 
   void *event_cancel;
-  void *hash_alg;
   std::vector<FL_FontMatch> loaded_font;
+  // Relative paths whose indexed contents duplicate another font file.
+  std::vector<std::string> duplicate_font_files;
+  std::vector<FL_FontVersionGroup> duplicate_font_versions;
 } FL_LoaderCtx;
 
 int fl_init(FL_LoaderCtx *c, allocator_t *alloc);
@@ -65,6 +78,11 @@ int fl_save_cache(FL_LoaderCtx *c, const wchar_t *cache);
 int fl_load_fonts(FL_LoaderCtx *c);
 
 int fl_load_fonts_incremental(FL_LoaderCtx *c);
+
+int fl_find_missing_fonts(
+    FL_LoaderCtx *c,
+    size_t first_font,
+    std::vector<std::string> *missing);
 
 int fl_unload_fonts(FL_LoaderCtx *c);
 
