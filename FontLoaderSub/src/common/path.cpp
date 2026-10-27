@@ -1,10 +1,7 @@
 #include "common/path.h"
 
-#include <filesystem>
-#include <system_error>
 #include <string>
-
-namespace fs = std::filesystem;
+#include <vector>
 
 int FlResolvePath(const wchar_t *path, std::wstring *out) {
   if (out == nullptr)
@@ -61,50 +58,47 @@ size_t FlPathParent(std::wstring *path) {
 int FlWalkDir(const wchar_t *path, FL_FileWalkCb callback, void *arg) {
   if (path == nullptr || callback == nullptr)
     return FL_OS_ERROR;
-  std::error_code ec;
-  const fs::path in_path(path);
-  if (!fs::exists(in_path, ec))
+  // Use Win32 enumeration so the static C++ filesystem runtime is not required.
+  WIN32_FILE_ATTRIBUTE_DATA attributes = {};
+  if (!GetFileAttributesExW(path, GetFileExInfoStandard, &attributes))
     return FL_OK;
-
   WIN32_FIND_DATAW fd = {};
-  WIN32_FILE_ATTRIBUTE_DATA fad = {};
-
-  if (fs::is_regular_file(in_path, ec)) {
-    if (GetFileAttributesExW(in_path.c_str(), GetFileExInfoStandard, &fad)) {
-      fd.dwFileAttributes = fad.dwFileAttributes;
-      fd.nFileSizeHigh = fad.nFileSizeHigh;
-      fd.nFileSizeLow = fad.nFileSizeLow;
-      return callback(in_path.c_str(), &fd, arg);
-    }
-    return FL_OK;
+  if (!(attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+    fd.dwFileAttributes = attributes.dwFileAttributes;
+    fd.nFileSizeHigh = attributes.nFileSizeHigh;
+    fd.nFileSizeLow = attributes.nFileSizeLow;
+    return callback(path, &fd, arg);
   }
 
-  if (!fs::is_directory(in_path, ec))
-    return FL_OK;
+  // Do not recurse into directory links; inaccessible directories are skipped.
+  std::vector<std::wstring> directories{path};
+  while (!directories.empty()) {
+    std::wstring directory = std::move(directories.back());
+    directories.pop_back();
+    if (!directory.empty() && directory.back() != L'\\' && directory.back() != L'/')
+      directory += L'\\';
+    HANDLE find = FindFirstFileW((directory + L'*').c_str(), &fd);
+    if (find == INVALID_HANDLE_VALUE)
+      continue;
 
-  const auto options = fs::directory_options::skip_permission_denied;
-  fs::recursive_directory_iterator it(in_path, options, ec);
-  fs::recursive_directory_iterator end;
-  for (; it != end; it.increment(ec)) {
-    if (ec) {
-      ec.clear();
-      continue;
-    }
-    const fs::path entry_path = it->path();
-    if (it->is_directory(ec))
-      continue;
-    if (ec) {
-      ec.clear();
-      continue;
-    }
-    if (GetFileAttributesExW(entry_path.c_str(), GetFileExInfoStandard, &fad)) {
-      fd.dwFileAttributes = fad.dwFileAttributes;
-      fd.nFileSizeHigh = fad.nFileSizeHigh;
-      fd.nFileSizeLow = fad.nFileSizeLow;
-      const int r = callback(entry_path.c_str(), &fd, arg);
-      if (r != FL_OK)
-        return r;
-    }
+    // Close the search handle even when the callback stops enumeration.
+    int result = FL_OK;
+    do {
+      if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0)
+        continue;
+      const std::wstring entry = directory + fd.cFileName;
+      if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+          directories.push_back(entry);
+      } else {
+        result = callback(entry.c_str(), &fd, arg);
+        if (result != FL_OK)
+          break;
+      }
+    } while (FindNextFileW(find, &fd));
+    FindClose(find);
+    if (result != FL_OK)
+      return result;
   }
   return FL_OK;
 }

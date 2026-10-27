@@ -195,6 +195,7 @@ if get_option('winui')
   ui_link_arguments = [
     '/DELAYLOAD:api-ms-win-core-winrt-l1-1-0.dll',
     '/DELAYLOAD:api-ms-win-core-winrt-error-l1-1-0.dll',
+    '/DELAYLOAD:api-ms-win-core-winrt-error-l1-1-1.dll',
   ]
 endif
 
