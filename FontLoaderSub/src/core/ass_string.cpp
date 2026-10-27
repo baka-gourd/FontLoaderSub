@@ -1,4 +1,4 @@
-#include "ass_string.h"
+#include "core/ass_string.h"
 
 int ass_is_space(int ch) {
   return ch == ' ' || ch == '\t';

@@ -1,4 +1,4 @@
-#include "ass_parser.h"
+#include "core/ass_parser.h"
 
 static int null_cb(const char *font, size_t cch, void *arg) {
   return 0;

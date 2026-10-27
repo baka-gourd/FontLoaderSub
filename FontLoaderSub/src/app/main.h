@@ -23,8 +23,8 @@
 #include <vector>
 
 #include "res/resource.h"
-#include "font_loader.h"
-#include "shortcut.h"
+#include "core/font_loader.h"
+#include "platform/win32/shortcut.h"
 
 typedef enum {
   APP_LOAD_SUB = IDS_WORK_SUBTITLE,
@@ -33,6 +33,7 @@ typedef enum {
   APP_CHECK_FONT = IDS_WORK_CHECK,
   APP_LOAD_FONT = IDS_WORK_LOAD,
   APP_UNLOAD_FONT = IDS_WORK_UNLOAD,
+  APP_BUILD_DUPLICATES = IDS_DUPLICATE_PREPARING,
   APP_DONE = IDS_WORK_DONE,
   APP_CANCELLED,
   APP_CONFIRM_MISSING = 1000
@@ -43,6 +44,8 @@ typedef struct {
   allocator_t *alloc;
   int argc;
   LPWSTR *argv;
+  bool force_old_ui;
+  bool unload_only;
 
   std::atomic<int> cancelled;
   int error;
@@ -85,6 +88,8 @@ typedef struct {
   std::vector<std::string> missing_fonts;
   std::wstring missing_summary;
   std::wstring missing_text;
+  std::wstring duplicate_summary, duplicate_text;
+  bool duplicate_ready;
   int suppress_help_once;
   int incremental_load;  // flag for incremental font loading
   LONG drop_guard;

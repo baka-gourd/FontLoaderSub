@@ -1,4 +1,5 @@
-#include "shortcut.h"
+#include "platform/win32/shortcut.h"
+#include "ui/app_ui.h"
 
 #include <Shlwapi.h>
 #include <ShlObj.h>
@@ -7,7 +8,7 @@
 #include <cwchar>
 #include <limits>
 
-#include "dark_mode.h"
+#include "platform/win32/dark_mode.h"
 #include "res/resource.h"
 
 typedef enum {
@@ -75,6 +76,8 @@ void ShortcutShow(FL_ShortCtx *c, HWND hWnd) {
   c->dlg.pszWindowTitle = c->dlg_title;
   c->dlg.nDefaultButton = IDCLOSE;
   ShortcutRefresh(c, 0);
+  if (AppUiShowDialog(&c->dlg))
+    return;
   TaskDialogIndirect(&c->dlg, nullptr, nullptr, nullptr);
 }
 
@@ -259,7 +262,7 @@ static HRESULT CALLBACK DlgShortcutProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
-  DarkModeTaskDialogNotification(hWnd, uNotification);
+  AppUiThemeNotification(hWnd, uNotification);
   FL_ShortCtx *c = (FL_ShortCtx *)dwRefData;
   switch (uNotification) {
   case TDN_BUTTON_CLICKED: {
@@ -272,7 +275,7 @@ static HRESULT CALLBACK DlgShortcutProc(
       int err = c->setup[id] ? IDS_SHORTCUT_ERROR_DEL : IDS_SHORTCUT_ERROR_ADD;
       ShortcutRefresh(c, succ ? 0 : err);
       c->dlg.nDefaultButton = static_cast<int>(wParam);
-      SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg);
+      AppUiNavigateDialog(hWnd, &c->dlg);
       return S_FALSE;
     }
   }

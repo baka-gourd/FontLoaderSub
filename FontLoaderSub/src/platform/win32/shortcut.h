@@ -17,7 +17,7 @@
 
 #include <string>
 
-#include "util.h"
+#include "common/util.h"
 
 enum { FL_SHORTCUT_SENDTO = 0, FL_SHORTCUT_CONTEXT, FL_SHORTCUT_MAX };
 

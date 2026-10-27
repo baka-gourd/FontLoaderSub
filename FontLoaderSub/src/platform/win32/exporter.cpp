@@ -1,12 +1,12 @@
-#include "exporter.h"
+#include "platform/win32/exporter.h"
 
 #include <string>
 
 #include <Shobjidl.h>
 
-#include "dark_mode.h"
-#include "log.h"
-#include "utf.h"
+#include "platform/win32/dark_mode.h"
+#include "common/log.h"
+#include "common/utf.h"
 
 #define C_SAVE_RELEASE(obj)          \
   do {                               \

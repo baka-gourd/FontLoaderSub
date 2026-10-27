@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Generate the projection before C++ or resource compilation consumes it. -->
+  <Target Name="PrepareWinui" BeforeTargets="ClCompile;ResourceCompile"
+          Condition="'$(EnableWinUI)' == 'true' and '$(DesignTimeBuild)' != 'true'"
+          Inputs="$(ProjectDir)..\tools\prepare_winui.py;$(MSBuildThisFileFullPath)"
+          Outputs="$(WinuiDir)bootstrap.rc;$(WinuiDir)include\winrt\Microsoft.UI.Xaml.h;$(WinuiDir)Microsoft.WindowsAppRuntime.Bootstrap.dll">
+    <PropertyGroup>
+      <WinuiSdkArgument Condition="Exists('$(WindowsSdkDir)UnionMetadata\$(WindowsTargetPlatformVersion)\Windows.winmd')">--sdk &quot;$(WindowsSdkDir)UnionMetadata\$(WindowsTargetPlatformVersion)\Windows.winmd&quot;</WinuiSdkArgument>
+    </PropertyGroup>
+    <Exec Command="&quot;$(PythonExe)&quot; &quot;$(ProjectDir)..\tools\prepare_winui.py&quot; --output &quot;$(WinuiDir).&quot; --arch $(WinuiArch) $(WinuiSdkArgument)" />
+  </Target>
+
+  <!-- Write version metadata before resource compilation without modifying sources. -->
+  <Target Name="SetSemanticVersion" BeforeTargets="ResourceCompile" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)..\tools\version.ps1&quot;"
+          ConsoleToMSBuild="true" IgnoreExitCode="true" WorkingDirectory="$(ProjectDir)..">
+      <Output TaskParameter="ConsoleOutput" PropertyName="DetectedSemanticVersion" />
+    </Exec>
+    <PropertyGroup>
+      <DetectedSemanticVersion Condition="'$(DetectedSemanticVersion)' == ''">2.0.0</DetectedSemanticVersion>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntDir)" />
+    <WriteLinesToFile File="$(IntDir)fontloadersub_version.h" Overwrite="true" WriteOnlyWhenDifferent="true"
+        Lines="#pragma once;#define FONTLOADERSUB_GIT_VERSION &quot;$(DetectedSemanticVersion)&quot;" />
+  </Target>
+</Project>

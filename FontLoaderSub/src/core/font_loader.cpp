@@ -1,4 +1,4 @@
-#include "font_loader.h"
+#include "core/font_loader.h"
 
 #include <Windows.h>
 
@@ -13,13 +13,13 @@
 #include <unordered_set>
 #include <vector>
 
-#include "ass_string.h"
-#include "ass_parser.h"
-#include "path.h"
-#include "log.h"
-#include "mock_config.h"
-#include "util.h"
-#include "utf.h"
+#include "core/ass_string.h"
+#include "core/ass_parser.h"
+#include "common/path.h"
+#include "common/log.h"
+#include "app/mock_config.h"
+#include "common/util.h"
+#include "common/utf.h"
 
 #include <tlx/sort/parallel_mergesort.hpp>
 #include <blockingconcurrentqueue.h>
@@ -244,7 +244,7 @@ fl_walk_sub_callback(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   c->num_sub.fetch_add(1, std::memory_order_relaxed);
   ass_process_data(content, content_len, fl_sub_font_callback, c);
   const size_t after_fonts = c->sub_font_set.size();
-  const size_t new_fonts =
+  [[maybe_unused]] const size_t new_fonts =
       (after_fonts >= before_fonts) ? (after_fonts - before_fonts) : 0;
   if (!path_u8.empty()) {
     SPDLOG_INFO(

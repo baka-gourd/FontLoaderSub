@@ -1,9 +1,9 @@
-#include "font_set.h"
+#include "core/font_set.h"
 
-#include "font_db_generated.h"
-#include "ttf_parser.h"
-#include "util.h"
-#include "utf.h"
+#include "generated/font_db_generated.h"
+#include "core/ttf_parser.h"
+#include "common/util.h"
+#include "common/utf.h"
 
 #include "absl/strings/string_view.h"
 

@@ -1,13 +1,14 @@
-image: Visual Studio 2019
+image: Visual Studio 2022
 
 install:
 - ps: |
+    git submodule update --init --recursive
     $env:COMM_TAG = & .\tools\version.ps1
     $env:PROJECT = "FontLoaderSub"
     $env:CMDLINE_DEFINE = "FONTLOADERSUB_GIT_VERSION=\""{0}\""" -f $env:COMM_TAG
 
 build_script:
-- msbuild /p:Platform=x86 /p:Configuration=Minimize
+- msbuild FontLoaderSub.sln /m /p:Platform=x64 /p:Configuration=Minimize
 
 after_build:
 - ps: |
@@ -15,7 +16,7 @@ after_build:
         "Minimize";
     )
     foreach ($conf in $CONFIGS) {
-        7z a "$env:PROJECT-$env:COMM_TAG-$conf.zip" "$conf\" "-xr!*.iobj" "-xr!*.ipdb"
+        7z a "$env:PROJECT-$env:COMM_TAG-$conf.zip" "build-vs\x64\$conf\FontLoaderSub.exe"
     }
 
     Get-ChildItem . -Recurse | where {$_.Extension -eq ".exe"} | Get-FileHash -Algorithm SHA256

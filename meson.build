@@ -58,6 +58,7 @@ if not fs.is_file(vcpkg_manifest)
   error('Project vcpkg manifest not found: ' + vcpkg_manifest)
 endif
 
+if get_option('vcpkg_install')
 message('Checking vcpkg dependencies via manifest...')
 vcpkg_install = run_command(
   vcpkg_exe,
@@ -73,6 +74,7 @@ if vcpkg_install.returncode() != 0
     'vcpkg install failed:\n' + vcpkg_install.stdout() + '\n' +
     vcpkg_install.stderr(),
   )
+endif
 endif
 
 vcpkg_include_dir = vcpkg_root / 'installed' / vcpkg_triplet / 'include'
@@ -142,7 +144,7 @@ dep_comctl32 = cpp.find_library('comctl32')
 dep_uxtheme = cpp.find_library('uxtheme')
 dep_dwmapi = cpp.find_library('dwmapi')
 
-src_inc = include_directories('FontLoaderSub')
+src_inc = include_directories('FontLoaderSub', 'FontLoaderSub/src')
 res_inc = include_directories('FontLoaderSub/res')
 root_inc = include_directories('.')
 tlx_inc = include_directories('third_party/tlx')
@@ -150,24 +152,52 @@ queue_inc = include_directories('third_party/concurrentqueue')
 vcpkg_include_arg = cpp.get_id() == 'msvc' ? '/I' + vcpkg_include_dir : '-I' + vcpkg_include_dir
 
 sources = files(
-  'FontLoaderSub/ass_parser.cpp',
-  'FontLoaderSub/ass_string.cpp',
-  'FontLoaderSub/dark_mode.cpp',
-  'FontLoaderSub/exporter.cpp',
-  'FontLoaderSub/font_loader.cpp',
-  'FontLoaderSub/font_set.cpp',
-  'FontLoaderSub/log.cpp',
-  'FontLoaderSub/main.cpp',
-  'FontLoaderSub/path.cpp',
-  'FontLoaderSub/shortcut.cpp',
-  'FontLoaderSub/test.cpp',
-  'FontLoaderSub/ttf_parser.cpp',
-  'FontLoaderSub/utf.cpp',
-  'FontLoaderSub/util.cpp',
+  'FontLoaderSub/src/ui/app_ui.cpp',
+  'FontLoaderSub/src/core/ass_parser.cpp',
+  'FontLoaderSub/src/core/ass_string.cpp',
+  'FontLoaderSub/src/platform/win32/dark_mode.cpp',
+  'FontLoaderSub/src/platform/win32/exporter.cpp',
+  'FontLoaderSub/src/core/font_loader.cpp',
+  'FontLoaderSub/src/core/font_set.cpp',
+  'FontLoaderSub/src/common/log.cpp',
+  'FontLoaderSub/src/app/main.cpp',
+  'FontLoaderSub/src/common/path.cpp',
+  'FontLoaderSub/src/platform/win32/shortcut.cpp',
+  'FontLoaderSub/tests/test.cpp',
+  'FontLoaderSub/src/core/ttf_parser.cpp',
+  'FontLoaderSub/src/common/utf.cpp',
+  'FontLoaderSub/src/common/util.cpp',
   'third_party/tlx/tlx/algorithm/parallel_multiway_merge.cpp',
 )
 
 windows_mod = import('windows')
+ui_dependencies = []
+ui_arguments = []
+ui_link_arguments = []
+ui_resources = []
+
+# Generate WinRT projections without MSBuild, keeping the normal vcpkg dependency graph.
+if get_option('winui')
+  if cpp.get_id() != 'msvc'
+    error('WinUI single-EXE builds currently require MSVC; use -Dwinui=false otherwise')
+  endif
+  ui_arch = {'x86_64': 'x64', 'x86': 'x86', 'aarch64': 'arm64'}[host_machine.cpu_family()]
+  python = import('python').find_installation()
+  ui_dir = meson.current_build_dir() / 'winui'
+  run_command(python, files('tools/prepare_winui.py'), '--output', ui_dir,
+    '--arch', ui_arch, check: true)
+  ui_arguments = ['/DFONTLOADERSUB_WINUI', '/I' + ui_dir / 'include']
+  sources += files('FontLoaderSub/src/ui/winui/winui_backend.cpp', 'FontLoaderSub/src/ui/winui/winui_runtime.cpp')
+  ui_resources = windows_mod.compile_resources(ui_dir / 'bootstrap.rc')
+
+  # Defer WinRT imports so the same executable can start on Windows 7.
+  ui_dependencies = [cpp.find_library('runtimeobject'), cpp.find_library('delayimp')]
+  ui_link_arguments = [
+    '/DELAYLOAD:api-ms-win-core-winrt-l1-1-0.dll',
+    '/DELAYLOAD:api-ms-win-core-winrt-error-l1-1-0.dll',
+  ]
+endif
+
 resources = windows_mod.compile_resources(
   files(
     'FontLoaderSub/res/res.rc',
@@ -183,8 +213,10 @@ executable(
   'FontLoaderSub',
   sources,
   resources,
+  ui_resources,
   include_directories: [src_inc, res_inc, tlx_inc, queue_inc],
-  cpp_args: [vcpkg_include_arg],
+  cpp_args: [vcpkg_include_arg] + ui_arguments,
+  link_args: ui_link_arguments,
   dependencies: [
     dep_simdutf,
     dep_flatbuffers,
@@ -197,6 +229,6 @@ executable(
     dep_comctl32,
     dep_uxtheme,
     dep_dwmapi,
-  ],
+  ] + ui_dependencies,
   win_subsystem: 'windows',
 )

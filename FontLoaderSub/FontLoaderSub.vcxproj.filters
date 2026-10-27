@@ -1,130 +1,190 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
   <ItemGroup>
-    <Filter Include="Source Files">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    <Filter Include="src">
+      <UniqueIdentifier>{00DCA7A1-04D4-5935-B36D-3C9787EFE36E}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
+    <Filter Include="src\app">
+      <UniqueIdentifier>{353ABA00-C1E7-5A4B-BD77-64DA1F159141}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Resource Files">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    <Filter Include="src\common">
+      <UniqueIdentifier>{3AFF57F0-CA0F-55C4-A90D-BF558F595032}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\core">
+      <UniqueIdentifier>{04624BFF-E3EC-5022-B341-848F6F765DD3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\generated">
+      <UniqueIdentifier>{E91AAA40-0EF8-5BA4-B278-813E3CCE8CF2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\platform">
+      <UniqueIdentifier>{68243940-B396-5371-9DFB-B1614521B963}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\platform\win32">
+      <UniqueIdentifier>{AA2B357E-65D4-5DE0-B9D8-E5852211591E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\ui">
+      <UniqueIdentifier>{5ECF19E3-8630-56B5-80C5-CEBA65599DFC}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\ui\winui">
+      <UniqueIdentifier>{84E131CC-16F1-598A-9B5F-987BC59C7073}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="tests">
+      <UniqueIdentifier>{3B50E70C-5CD5-5D7A-9CF6-FDBF13F52983}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="third_party">
+      <UniqueIdentifier>{072490C4-B63E-542F-B623-A6B689E42301}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="res">
+      <UniqueIdentifier>{F57B37DC-F816-5044-8C70-835FCE97D271}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="schemas">
+      <UniqueIdentifier>{E26B9668-B36F-5A9C-996C-8BDDDC8C3767}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="docs">
+      <UniqueIdentifier>{B1E98C87-9F53-54CF-943D-4FD1D932918B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="generated build files">
+      <UniqueIdentifier>{83F35825-CAD0-5951-97C8-446FB521D9DE}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="res\res.rc">
-      <Filter>Resource Files</Filter>
-    </ResourceCompile>
-    <ResourceCompile Include="res\res_en-us.rc">
-      <Filter>Resource Files</Filter>
-    </ResourceCompile>
-    <ResourceCompile Include="res\res_zh-cn.rc">
-      <Filter>Resource Files</Filter>
-    </ResourceCompile>
-    <ResourceCompile Include="res\res_zh-tw.rc">
-      <Filter>Resource Files</Filter>
-    </ResourceCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <Manifest Include="res\app.manifest">
-      <Filter>Resource Files</Filter>
-    </Manifest>
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="src\app\main.cpp">
+      <Filter>src\app</Filter>
     </ClCompile>
-    <ClCompile Include="ass_parser.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\app\main.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClInclude Include="src\app\mock_config.h">
+      <Filter>src\app</Filter>
+    </ClInclude>
+    <ClCompile Include="src\common\log.cpp">
+      <Filter>src\common</Filter>
     </ClCompile>
-    <ClCompile Include="util.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\common\log.h">
+      <Filter>src\common</Filter>
+    </ClInclude>
+    <ClCompile Include="src\common\path.cpp">
+      <Filter>src\common</Filter>
     </ClCompile>
-    <ClCompile Include="ass_string.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\common\path.h">
+      <Filter>src\common</Filter>
+    </ClInclude>
+    <ClCompile Include="src\common\utf.cpp">
+      <Filter>src\common</Filter>
     </ClCompile>
-    <ClCompile Include="ttf_parser.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\common\utf.h">
+      <Filter>src\common</Filter>
+    </ClInclude>
+    <ClCompile Include="src\common\util.cpp">
+      <Filter>src\common</Filter>
     </ClCompile>
-    <ClCompile Include="font_set.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\common\util.h">
+      <Filter>src\common</Filter>
+    </ClInclude>
+    <ClCompile Include="src\core\ass_parser.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="font_loader.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\core\ass_parser.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClCompile Include="src\core\ass_string.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="path.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\core\ass_string.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClCompile Include="src\core\font_loader.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="test.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\core\font_loader.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClCompile Include="src\core\font_set.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="shortcut.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\core\font_set.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClCompile Include="src\core\ttf_parser.cpp">
+      <Filter>src\core</Filter>
     </ClCompile>
-    <ClCompile Include="exporter.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\core\ttf_parser.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\generated\font_db_generated.h">
+      <Filter>src\generated</Filter>
+    </ClInclude>
+    <ClCompile Include="src\platform\win32\dark_mode.cpp">
+      <Filter>src\platform\win32</Filter>
     </ClCompile>
-    <ClCompile Include="log.cpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="src\platform\win32\dark_mode.h">
+      <Filter>src\platform\win32</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\win32\dwrite_c.h">
+      <Filter>src\platform\win32</Filter>
+    </ClInclude>
+    <ClCompile Include="src\platform\win32\exporter.cpp">
+      <Filter>src\platform\win32</Filter>
+    </ClCompile>
+    <ClInclude Include="src\platform\win32\exporter.h">
+      <Filter>src\platform\win32</Filter>
+    </ClInclude>
+    <ClCompile Include="src\platform\win32\shortcut.cpp">
+      <Filter>src\platform\win32</Filter>
+    </ClCompile>
+    <ClInclude Include="src\platform\win32\shortcut.h">
+      <Filter>src\platform\win32</Filter>
+    </ClInclude>
+    <ClCompile Include="src\ui\app_ui.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClInclude Include="src\ui\app_ui.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClCompile Include="src\ui\winui\winui_backend.cpp">
+      <Filter>src\ui\winui</Filter>
+    </ClCompile>
+    <ClInclude Include="src\ui\winui\winui_backend.h">
+      <Filter>src\ui\winui</Filter>
+    </ClInclude>
+    <ClCompile Include="src\ui\winui\winui_runtime.cpp">
+      <Filter>src\ui\winui</Filter>
+    </ClCompile>
+    <ClInclude Include="src\ui\winui\winui_runtime.h">
+      <Filter>src\ui\winui</Filter>
+    </ClInclude>
+    <ClCompile Include="tests\test.cpp">
+      <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="..\third_party\tlx\tlx\algorithm\parallel_multiway_merge.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>third_party</Filter>
     </ClCompile>
-    <ClCompile Include="utf.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="util.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="ass_parser.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="ass_string.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="ttf_parser.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="font_set.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="font_loader.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="path.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="mock_config.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="shortcut.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
+    <Manifest Include="res\app.manifest">
+      <Filter>res</Filter>
+    </Manifest>
+    <ResourceCompile Include="res\res.rc">
+      <Filter>res</Filter>
+    </ResourceCompile>
+    <ResourceCompile Include="res\res_en-us.rc">
+      <Filter>res</Filter>
+    </ResourceCompile>
+    <ResourceCompile Include="res\res_zh-cn.rc">
+      <Filter>res</Filter>
+    </ResourceCompile>
+    <ResourceCompile Include="res\res_zh-tw.rc">
+      <Filter>res</Filter>
+    </ResourceCompile>
     <ClInclude Include="res\resource.h">
-      <Filter>Resource Files</Filter>
+      <Filter>res</Filter>
     </ClInclude>
-    <ClInclude Include="exporter.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="main.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="log.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="font_db_generated.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="utf.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <None Include="font_db.fbs">
-      <Filter>Header Files</Filter>
+    <None Include="schemas\font_db.fbs">
+      <Filter>schemas</Filter>
     </None>
+    <None Include="docs\diff_libass.txt">
+      <Filter>docs</Filter>
+    </None>
+    <ResourceCompile Include="$(WinuiDir)bootstrap.rc">
+      <Filter>generated build files</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>

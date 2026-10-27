@@ -46,7 +46,30 @@ STRINGTABLE
   IDS_DUPLICATE_IDENTICAL "内容完全相同（可删除以下副本）"
   IDS_DUPLICATE_VERSIONS "同名字体的不同版本"
   IDS_DUPLICATE_UNKNOWN_VERSION "未知版本"
+  IDS_MINIMIZE "最小化"
+  IDS_CANCEL "取消"
+  IDS_DETAILS "详细信息"
   IDS_CLOSE "关闭"
+  IDS_HOME_TITLE "字幕字体"
+  IDS_HOME_DESCRIPTION "加载字幕所需字体，无需安装到系统。"
+  IDS_ADD_SUBTITLE "添加字幕"
+  IDS_DROP_HINT "点击选择文件/文件夹"
+  IDS_DROP_TITLE "将字幕拖放到这里"
+  IDS_OVERVIEW "加载概览"
+  IDS_STAT_LOADED "已加载"
+  IDS_STAT_FAILED "加载失败"
+  IDS_STAT_UNMATCHED "缺失字体"
+  IDS_STAT_FILES "字体文件"
+  IDS_STAT_FACES "字体数量"
+  IDS_STAT_SUBS "字幕数量"
+  IDS_KEEP_OPEN "播放期间请保持程序运行，退出会卸载已加载的字体。"
+  IDS_MORE_ACTIONS "更多操作"
+  IDS_EXIT_UNLOAD "卸载并退出"
+  IDS_NO_DETAILS "添加字幕后，可在这里查看字体加载详情。"
+  IDS_FONT_DETAILS "字体详情"
+  IDS_DUPLICATE_PREPARING "正在整理重复字体信息…"
+  IDS_PREVIOUS_PAGE "上一页"
+  IDS_NEXT_PAGE "下一页"
 }
 
 LANGUAGE LANG_CHINESE, SUBLANG_SYS_DEFAULT
@@ -57,6 +80,7 @@ IDR_BTN_MENU MENU
     MENUITEM "更新索引(&R)", ID_BTN_RESCAN
     MENUITEM "导出字体(&E)", ID_BTN_EXPORT
     MENUITEM "字体去重(&D)", ID_BTN_DUPLICATE_FONT
+    MENUITEM "卸载字体(&U)", ID_BTN_UNLOAD_ALL
     MENUITEM SEPARATOR
     MENUITEM "帮助(&H)", ID_BTN_HELP
   }

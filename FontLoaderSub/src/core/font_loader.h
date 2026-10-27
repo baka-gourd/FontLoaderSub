@@ -5,8 +5,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "util.h"
-#include "font_set.h"
+#include "common/util.h"
+#include "core/font_set.h"
 
 typedef enum {
   FL_OS_LOADED = 1,

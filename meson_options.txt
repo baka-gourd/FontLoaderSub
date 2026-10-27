@@ -11,3 +11,17 @@ option(
   value: 'x64-windows-static',
   description: 'vcpkg target triplet',
 )
+
+option(
+  'winui',
+  type: 'boolean',
+  value: true,
+  description: 'Link optional WinUI 3 UI into the EXE (uses an installed Windows App Runtime 1.8)',
+)
+
+option(
+  'vcpkg_install',
+  type: 'boolean',
+  value: true,
+  description: 'Restore vcpkg dependencies during setup; disable only for an already populated install tree',
+)

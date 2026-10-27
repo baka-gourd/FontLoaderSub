@@ -1,4 +1,5 @@
-#include "dark_mode.h"
+#include "platform/win32/dark_mode.h"
+#include "ui/app_ui.h"
 
 #include <Dwmapi.h>
 #include <Richedit.h>
@@ -11,7 +12,7 @@
 #include <mutex>
 #include <unordered_map>
 
-#include "log.h"
+#include "common/log.h"
 
 namespace {
 
@@ -1028,5 +1029,12 @@ HRESULT AppTaskDialog(
   config.dwFlags =
       TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
   config.pfCallback = BasicTaskDialogCallback;
+  // Callers needing a synchronous result keep the native dialog contract.
+  if (!button) {
+    auto modern = config;
+    modern.pfCallback = nullptr;
+    if (AppUiShowDialog(&modern))
+      return S_OK;
+  }
   return TaskDialogIndirect(&config, button, nullptr, nullptr);
 }

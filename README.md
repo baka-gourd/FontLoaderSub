@@ -9,7 +9,15 @@ Instead of font files, drag-and-drop ASS/SSA subtitles and it will load correspo
 1. Move `FontLoaderSub.exe` to the root of font directory;
 1. Drag-and-drop subtitles `*.ass` (or folders) onto `FontLoaderSub.exe`.
 
+Use `FontLoaderSub.exe -old` to force the Win32 interface. The switch can appear
+before or after subtitle paths, for example `FontLoaderSub.exe -old "episode.ass"`.
+
 ## UI
+
+On Windows 10 1809 or later with a compatible Windows App Runtime 1.8 installed,
+the single executable uses WinUI 3. Other devices automatically use Win32.
+
+The Win32 interface retains its original behavior:
 
 * Line 1: requested fonts from subtitles;
 * Line 2: stats for font collection;
@@ -30,3 +38,8 @@ Example (with pixi):
 ```bash
 pixi run build
 ```
+
+Meson builds the optional WinUI code directly into the executable. It prepares
+pinned Windows App SDK / C++/WinRT build packages from the local NuGet cache or
+downloads them from NuGet; the remaining dependencies continue to use vcpkg.
+Use `-Dwinui=false` with Meson to build only the Win32 interface.

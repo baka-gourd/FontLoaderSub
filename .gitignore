@@ -245,3 +245,4 @@ ModelManifest.xml
 .pixi/*
 !.pixi/config.toml
 .clice/
+build-vs/

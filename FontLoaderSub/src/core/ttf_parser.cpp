@@ -1,5 +1,5 @@
-#include "ttf_parser.h"
-#include "util.h"
+#include "core/ttf_parser.h"
+#include "common/util.h"
 
 #define MAKE_TAG(a, b, c, d)                                             \
   ((uint32_t)(((uint8_t)(d) << 24)) | (uint32_t)(((uint8_t)(c) << 16)) | \

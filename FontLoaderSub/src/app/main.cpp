@@ -1,4 +1,5 @@
-#include "main.h"
+#include "app/main.h"
+#include "ui/app_ui.h"
 
 #include <Richedit.h>
 
@@ -6,15 +7,15 @@
 #include <new>
 #include <string>
 
-#include "ass_string.h"
-#include "dark_mode.h"
-#include "exporter.h"
-#include "log.h"
-#include "util.h"
-#include "shortcut.h"
-#include "mock_config.h"
+#include "core/ass_string.h"
+#include "platform/win32/dark_mode.h"
+#include "platform/win32/exporter.h"
+#include "common/log.h"
+#include "common/util.h"
+#include "platform/win32/shortcut.h"
+#include "app/mock_config.h"
 #include "res/resource.h"
-#include "utf.h"
+#include "common/utf.h"
 
 #define kCacheFile L"fc-subs.ftdb"
 #define kBlackFile L"fc-ignore.txt"
@@ -22,6 +23,8 @@
 
 static DWORD WINAPI app_worker(LPVOID param);
 static void AppStopCacheWorker(FL_AppCtx *c);
+static void AppPrepareDuplicateFonts(FL_AppCtx *c);
+static void AppShowDuplicateResult(HWND window, FL_AppCtx *c);
 static int AppNavigateDone(HWND hWnd, FL_AppCtx *c, int font_changed);
 static LRESULT CALLBACK DoneDialogSubclassProc(
     HWND hWnd,
@@ -121,13 +124,11 @@ static int AppAddSubtitleRoot(FL_AppCtx *c, const wchar_t *path) {
   return r;
 }
 
-static int AppQueueDrop(FL_AppCtx *c, HDROP hDrop, HWND navigate_hwnd) {
-  if (c == nullptr || c->app_state != APP_DONE) {
-    DragFinish(hDrop);
+static int AppQueuePaths(FL_AppCtx *c, std::vector<std::wstring> paths, HWND navigate_hwnd) {
+  if (c == nullptr || c->app_state != APP_DONE || AppUiHasDialog()) {
     return 0;
   }
   if (InterlockedExchange(&c->drop_guard, 1) != 0) {
-    DragFinish(hDrop);
     return 0;
   }
 
@@ -148,23 +149,6 @@ static int AppQueueDrop(FL_AppCtx *c, HDROP hDrop, HWND navigate_hwnd) {
       c->thread_load = nullptr;
     }
 
-    std::vector<std::wstring> paths;
-    const UINT file_count = DragQueryFile(hDrop, 0xFFFFFFFF, nullptr, 0);
-    try {
-      paths.reserve(file_count);
-      for (UINT i = 0; i < file_count; i++) {
-        const UINT len = DragQueryFile(hDrop, i, nullptr, 0);
-        if (len == 0)
-          continue;
-        std::wstring path(len + 1, L'\0');
-        const UINT written = DragQueryFile(hDrop, i, &path[0], len + 1);
-        path.resize(written);
-        if (!path.empty())
-          paths.push_back(std::move(path));
-      }
-    } catch (const std::bad_alloc &) {
-      paths.clear();
-    }
     if (paths.empty())
       break;
 
@@ -180,14 +164,35 @@ static int AppQueueDrop(FL_AppCtx *c, HDROP hDrop, HWND navigate_hwnd) {
     c->app_state = APP_LOAD_SUB;
     SetEvent(c->evt_stop_cache);
     DragAcceptFiles(navigate_hwnd, FALSE);
-    SendMessage(
-        navigate_hwnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
+    AppUiNavigate(navigate_hwnd, &c->dlg_work);
     queued = 1;
   } while (0);
 
-  DragFinish(hDrop);
   InterlockedExchange(&c->drop_guard, 0);
   return queued;
+}
+
+static int AppQueueDrop(FL_AppCtx *c, HDROP hDrop, HWND navigate_hwnd) {
+  // Shell drops and the file picker enter the same batch-loading path.
+  std::vector<std::wstring> paths;
+  const UINT file_count = DragQueryFile(hDrop, 0xFFFFFFFF, nullptr, 0);
+  try {
+    paths.reserve(file_count);
+    for (UINT i = 0; i < file_count; i++) {
+      const UINT len = DragQueryFile(hDrop, i, nullptr, 0);
+      if (len == 0)
+        continue;
+      std::wstring path(len + 1, L'\0');
+      const UINT written = DragQueryFile(hDrop, i, &path[0], len + 1);
+      path.resize(written);
+      if (!path.empty())
+        paths.push_back(std::move(path));
+    }
+  } catch (const std::bad_alloc &) {
+    paths.clear();
+  }
+  DragFinish(hDrop);
+  return AppQueuePaths(c, std::move(paths), navigate_hwnd);
 }
 
 static void *mem_realloc(void *existing, size_t size, void *arg) {
@@ -270,6 +275,18 @@ static int AppCreateMessageWindow(FL_AppCtx *c) {
 static void AppHelpUsage(FL_AppCtx *c, HWND hWnd) {
   c->show_shortcut = 0;
   c->dlg_help.hwndParent = hWnd;
+  // The modern dialog completes asynchronously before opening shortcut settings.
+  if (AppUiIsModern(hWnd)) {
+    TASKDIALOG_BUTTON shortcut = {ID_BTN_SHORTCUT, MAKEINTRESOURCE(IDS_MANAGE_SHORTCUT)};
+    auto config = c->dlg_help;
+    config.cButtons = 1;
+    config.pButtons = &shortcut;
+    if (AppUiShowDialog(&config, [c, hWnd] {
+          if (c->show_shortcut)
+            ShortcutShow(&c->shortcut, hWnd);
+        }))
+      return;
+  }
   TaskDialogIndirect(&c->dlg_help, nullptr, nullptr, nullptr);
   if (c->show_shortcut) {
     ShortcutShow(&c->shortcut, hWnd);
@@ -330,6 +347,7 @@ AppFormatStatus(FL_AppCtx *c, wchar_t *buffer, size_t buffer_count) {
       // arguments
       loaded, failed, unmatched, files, faces, subs,
   };
+  AppUiSetStats(c->work_hwnd, {loaded, failed, unmatched, files, faces, subs});
   return FormatMessage(
              FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY,
              ResLoadString(c->hInst, IDS_LOAD_STAT), 0, 0, buffer,
@@ -355,8 +373,7 @@ static void AppRefreshWorkStatus(FL_AppCtx *c) {
 
   const LPARAM cap_id = AppWorkCaptionId(c);
   if (!c->work_status_initialized || c->work_caption_id != cap_id) {
-    SendMessage(
-        c->work_hwnd, TDM_SET_ELEMENT_TEXT, TDE_MAIN_INSTRUCTION, cap_id);
+    AppUiSetText(c->work_hwnd, TDE_MAIN_INSTRUCTION, MAKEINTRESOURCEW(cap_id));
     c->work_caption_id = cap_id;
   }
 
@@ -365,9 +382,7 @@ static void AppRefreshWorkStatus(FL_AppCtx *c) {
   }
   if (!c->work_status_initialized ||
       wcscmp(c->status_txt, c->work_status_txt) != 0) {
-    SendMessage(
-        c->work_hwnd, TDM_SET_ELEMENT_TEXT, TDE_CONTENT,
-        reinterpret_cast<LPARAM>(c->status_txt));
+    AppUiSetText(c->work_hwnd, TDE_CONTENT, c->status_txt);
     wcscpy_s(
         c->work_status_txt, _countof(c->work_status_txt), c->status_txt);
   }
@@ -431,7 +446,7 @@ static int AppNavigateDone(HWND hWnd, FL_AppCtx *c, int font_changed) {
   c->dlg_done.pszContent = c->status_txt;
   if (font_changed)
     PostMessage(HWND_BROADCAST, WM_FONTCHANGE, 0, 0);
-  SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_done);
+  AppUiNavigate(hWnd, &c->dlg_done);
   return 1;
 }
 
@@ -528,12 +543,35 @@ static DWORD WINAPI app_worker(LPVOID param) {
       SPDLOG_INFO("APP_LOAD_FONT done, r={}", r);
       break;
     }
+    case APP_BUILD_DUPLICATES: {
+      // Reuse the cancellable worker and progress UI instead of blocking a click handler.
+      AppStopCacheWorker(c);
+      AppPrepareDuplicateFonts(c);
+      c->duplicate_ready = !c->cancelled;
+      c->app_state = APP_DONE;
+      break;
+    }
     case APP_UNLOAD_FONT: {
       SPDLOG_INFO("State: APP_UNLOAD_FONT");
       AppStopCacheWorker(c);
       fl_unload_fonts(&c->loader);
       if (c->req_exit) {
         c->cancelled = 1;
+      } else if (c->unload_only) {
+        // Clear session deduplication so the same subtitles can be loaded again.
+        AppClearSubtitleBatch(c);
+        c->loaded_subs.clear();
+        c->loader.sub_fonts.clear();
+        c->loader.sub_font_set.clear();
+        c->loader.loaded_sub_files.clear();
+        c->loader.num_sub.store(0, std::memory_order_relaxed);
+        c->loader.num_sub_font.store(0, std::memory_order_relaxed);
+
+        // Preserve the font index and return to idle without rescanning or exiting.
+        c->missing_fonts.clear();
+        c->incremental_load = 0;
+        c->unload_only = false;
+        c->app_state = APP_DONE;
       } else {
         c->app_state = APP_SCAN_FONT;
       }
@@ -573,7 +611,7 @@ static HRESULT CALLBACK DlgWorkProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
-  DarkModeTaskDialogNotification(hWnd, uNotification);
+  AppUiThemeNotification(hWnd, uNotification);
   auto c = (FL_AppCtx *)dwRefData;
   int navigated = 0;
   int refresh_status = 0;
@@ -582,7 +620,7 @@ static HRESULT CALLBACK DlgWorkProc(
     c->work_status_initialized = 0;
     c->work_status_txt[0] = L'\0';
     c->work_caption_id = 0;
-    SendMessage(hWnd, TDM_SET_PROGRESS_BAR_MARQUEE, TRUE, 0);
+    AppUiStartProgress(hWnd);
     if (c->taskbar_list3) {
       c->taskbar_list3->lpVtbl->SetProgressState(
           c->taskbar_list3, hWnd, TBPF_INDETERMINATE);
@@ -629,8 +667,7 @@ static HRESULT CALLBACK DlgWorkProc(
       }
       if (c->app_state == APP_CONFIRM_MISSING) {
         if (AppBuildMissingText(c)) {
-          SendMessage(
-              hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_missing);
+          AppUiNavigate(hWnd, &c->dlg_missing);
           navigated = 1;
         } else {
           AppTaskDialog(
@@ -642,12 +679,16 @@ static HRESULT CALLBACK DlgWorkProc(
         // worker exited without error...
         if (!c->cancelled) {
           // and has not been cancelled
-          navigated = AppNavigateDone(hWnd, c, 1);
+          const bool show_duplicates = c->duplicate_ready;
+          c->duplicate_ready = false;
+          navigated = AppNavigateDone(hWnd, c, !show_duplicates);
+          if (show_duplicates)
+            AppShowDuplicateResult(hWnd, c);
         } else {
           // worker done, then cancelled before timer,
           // work again to continue cancellation routine
           c->app_state = APP_UNLOAD_FONT;
-          SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
+          AppUiNavigate(hWnd, &c->dlg_work);
         }
       } else {
         if (c->app_state != APP_CANCELLED) {
@@ -673,7 +714,7 @@ static HRESULT CALLBACK DlgMissingProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
-  DarkModeTaskDialogNotification(hWnd, uNotification);
+  AppUiThemeNotification(hWnd, uNotification);
   auto c = reinterpret_cast<FL_AppCtx *>(dwRefData);
   if (uNotification != TDN_BUTTON_CLICKED)
     return S_OK;
@@ -682,7 +723,7 @@ static HRESULT CALLBACK DlgMissingProc(
     AppCommitSubtitleBatch(c);
     c->missing_fonts.clear();
     c->app_state = APP_LOAD_FONT;
-    SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
+    AppUiNavigate(hWnd, &c->dlg_work);
     return S_FALSE;
   }
   if (wParam == IDCANCEL) {
@@ -703,10 +744,12 @@ static HRESULT CALLBACK DlgHelpProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
-  DarkModeTaskDialogNotification(hWnd, uNotification);
+  AppUiThemeNotification(hWnd, uNotification);
   auto c = (FL_AppCtx *)dwRefData;
-  if (uNotification == TDN_HYPERLINK_CLICKED) {
-    PostMessage(hWnd, WM_CLOSE, 0, 0);
+  if (uNotification == TDN_HYPERLINK_CLICKED ||
+      (uNotification == TDN_BUTTON_CLICKED && wParam == ID_BTN_SHORTCUT)) {
+    if (!AppUiIsModern(hWnd))
+      PostMessage(hWnd, WM_CLOSE, 0, 0);
     c->show_shortcut = 1;
   }
   return S_OK;
@@ -783,9 +826,12 @@ static INT_PTR CALLBACK DuplicateDialogProc(
   return FALSE;
 }
 
-static void AppShowDuplicateFonts(HWND hWnd, FL_AppCtx *c) {
-  std::wstring detail_text;
-  std::wstring summary;
+static void AppPrepareDuplicateFonts(FL_AppCtx *c) {
+  // Only the worker writes these strings; the UI reads them after the worker exits.
+  auto &detail_text = c->duplicate_text;
+  auto &summary = c->duplicate_summary;
+  detail_text.clear();
+  summary.clear();
   try {
     size_t reserve_chars = 256;
     for (const auto &path : c->loader.duplicate_font_files)
@@ -801,6 +847,8 @@ static void AppShowDuplicateFonts(HWND hWnd, FL_AppCtx *c) {
       detail_text.append(ResLoadString(c->hInst, IDS_DUPLICATE_IDENTICAL));
       detail_text.append(L"\r\n");
       for (const auto &path : c->loader.duplicate_font_files) {
+        if (c->cancelled)
+          return;
         std::wstring path_w;
         if (!Utf8ToUtf16(path.c_str(), &path_w))
           continue;
@@ -816,12 +864,16 @@ static void AppShowDuplicateFonts(HWND hWnd, FL_AppCtx *c) {
       detail_text.append(ResLoadString(c->hInst, IDS_DUPLICATE_VERSIONS));
       detail_text.append(L"\r\n");
       for (const auto &group : c->loader.duplicate_font_versions) {
+        if (c->cancelled)
+          return;
         std::wstring name_w;
         if (!Utf8ToUtf16(group.name.c_str(), &name_w))
           continue;
         detail_text.append(name_w);
         detail_text.append(L"\r\n");
         for (const auto &font : group.fonts) {
+          if (c->cancelled)
+            return;
           std::wstring version_w;
           std::wstring path_w;
           if (!font.version.empty()) {
@@ -862,6 +914,22 @@ static void AppShowDuplicateFonts(HWND hWnd, FL_AppCtx *c) {
     summary.clear();
   }
 
+}
+
+static void AppShowDuplicateFonts(HWND window, FL_AppCtx *c) {
+  if (c->app_state != APP_DONE)
+    return;
+  c->duplicate_ready = false;
+  c->suppress_help_once = 1;
+  c->cancelled = 0;
+  c->app_state = APP_BUILD_DUPLICATES;
+  DragAcceptFiles(window, FALSE);
+  AppUiNavigate(window, &c->dlg_work);
+}
+
+static void AppShowDuplicateResult(HWND hWnd, FL_AppCtx *c) {
+  const auto &detail_text = c->duplicate_text;
+  const auto &summary = c->duplicate_summary;
   if (detail_text.empty() || summary.empty()) {
     AppTaskDialog(
         hWnd, c->hInst, MAKEINTRESOURCE(IDS_APP_NAME_VER),
@@ -870,6 +938,18 @@ static void AppShowDuplicateFonts(HWND hWnd, FL_AppCtx *c) {
         TD_INFORMATION_ICON, nullptr);
     return;
   }
+
+  // Use an in-window dialog while keeping the resizable native fallback intact.
+  TASKDIALOGCONFIG modern = {};
+  modern.cbSize = sizeof modern;
+  modern.hInstance = c->hInst;
+  modern.hwndParent = hWnd;
+  modern.pszMainInstruction = MAKEINTRESOURCE(IDS_DUPLICATE_FONT);
+  modern.pszContent = summary.c_str();
+  modern.pszExpandedInformation = detail_text.c_str();
+  modern.dwCommonButtons = TDCBF_CLOSE_BUTTON;
+  if (AppUiShowDialog(&modern))
+    return;
 
   HMODULE rich_edit = LoadLibraryW(L"Msftedit.dll");
   if (rich_edit == nullptr) {
@@ -887,6 +967,43 @@ static void AppShowDuplicateFonts(HWND hWnd, FL_AppCtx *c) {
   FreeLibrary(rich_edit);
 }
 
+static void AppPickSubtitles(HWND window, FL_AppCtx *c) {
+  // A native picker preserves Explorer navigation and keyboard accessibility.
+  IFileOpenDialog *picker = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+          IID_IFileOpenDialog, reinterpret_cast<void **>(&picker))))
+    return;
+  DWORD options = 0;
+  picker->lpVtbl->GetOptions(picker, &options);
+  picker->lpVtbl->SetOptions(picker, options | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM);
+  const COMDLG_FILTERSPEC filter = {L"ASS / SSA", L"*.ass;*.ssa"};
+  picker->lpVtbl->SetFileTypes(picker, 1, &filter);
+
+  // Copy selected paths before releasing COM objects or starting worker threads.
+  IShellItemArray *items = nullptr;
+  std::vector<std::wstring> paths;
+  if (SUCCEEDED(picker->lpVtbl->Show(picker, window)) &&
+      SUCCEEDED(picker->lpVtbl->GetResults(picker, &items))) {
+    DWORD count = 0;
+    items->lpVtbl->GetCount(items, &count);
+    for (DWORD i = 0; i < count; ++i) {
+      IShellItem *item = nullptr;
+      if (FAILED(items->lpVtbl->GetItemAt(items, i, &item)))
+        continue;
+
+      PWSTR path = nullptr;
+      if (SUCCEEDED(item->lpVtbl->GetDisplayName(item, SIGDN_FILESYSPATH, &path))) {
+        paths.emplace_back(path);
+        CoTaskMemFree(path);
+      }
+      item->lpVtbl->Release(item);
+    }
+    items->lpVtbl->Release(items);
+  }
+  picker->lpVtbl->Release(picker);
+  AppQueuePaths(c, std::move(paths), window);
+}
+
 static HRESULT CALLBACK DlgDoneButtonDispatch(
     HWND hWnd,
     UINT uNotification,
@@ -895,18 +1012,23 @@ static HRESULT CALLBACK DlgDoneButtonDispatch(
     FL_AppCtx *c) {
   // all return S_FALSE: never close dialog
   switch (wParam) {
+  case ID_BTN_ADD_SUBS:
+    AppPickSubtitles(hWnd, c);
+    return S_FALSE;
   case IDCANCEL:
   case IDCLOSE:
+  case ID_BTN_UNLOAD_ALL:
   case ID_BTN_RESCAN: {
     // Disable drag-drop before navigating away
     DragAcceptFiles(hWnd, FALSE);
 
-    if (wParam != ID_BTN_RESCAN) {
-      c->req_exit = 1;
-    }
+    c->unload_only = wParam == ID_BTN_UNLOAD_ALL;
+    c->req_exit = wParam == IDCANCEL || wParam == IDCLOSE;
+    if (c->unload_only)
+      c->suppress_help_once = 1;
     SetEvent(c->evt_stop_cache);
     c->app_state = APP_UNLOAD_FONT;
-    SendMessage(hWnd, TDM_NAVIGATE_PAGE, 0, (LPARAM)&c->dlg_work);
+    AppUiNavigate(hWnd, &c->dlg_work);
     return S_FALSE;
   }
   case IDOK: {
@@ -971,7 +1093,7 @@ static HRESULT CALLBACK DlgDoneProc(
     WPARAM wParam,
     LPARAM lParam,
     LONG_PTR dwRefData) {
-  DarkModeTaskDialogNotification(hWnd, uNotification);
+  AppUiThemeNotification(hWnd, uNotification);
   auto c = (FL_AppCtx *)dwRefData;
   if (uNotification == TDN_NAVIGATED) {
     FS_Stat stat = {0};
@@ -981,7 +1103,7 @@ static HRESULT CALLBACK DlgDoneProc(
     if (c->loader.num_sub_font.load(std::memory_order_relaxed) == 0 ||
         stat.num_face == 0) {
       EnableMenuItem(c->btn_menu, ID_BTN_EXPORT, MF_BYCOMMAND | MF_GRAYED);
-      if (!suppress_help)
+      if (!suppress_help && !AppUiIsModern(hWnd))
         AppHelpUsage(c, hWnd);
     } else {
       DWORD thread_id;
@@ -990,6 +1112,8 @@ static HRESULT CALLBACK DlgDoneProc(
       c->thread_cache =
           CreateThread(nullptr, 0, AppCacheWorker, c, 0, &thread_id);
     }
+
+    AppUiSetMenu(hWnd, GetSubMenu(c->btn_menu, 0));
 
     // find the "Menu" button
     c->handle_btn_menu = nullptr;
@@ -1119,6 +1243,18 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
     SPDLOG_ERROR("CommandLineToArgvW failed");
     return 0;
   }
+  // Consume UI switches once so worker retries only receive subtitle paths.
+  c->force_old_ui = false;
+  c->unload_only = false;
+  int path_argc = 1;
+  for (int i = 1; i < c->argc; ++i) {
+    if (_wcsicmp(c->argv[i], L"-old") == 0)
+      c->force_old_ui = true;
+    else
+      c->argv[path_argc++] = c->argv[i];
+  }
+  c->argc = path_argc;
+  c->argv[path_argc] = nullptr;
   DWORD initial = MAX_PATH;
   while (1) {
     c->full_exe_path.resize(initial);
@@ -1205,7 +1341,9 @@ static int AppRun(FL_AppCtx *c) {
     return 0;
   }
 
-  TaskDialogIndirect(&c->dlg_work, nullptr, nullptr, nullptr);
+  AppUiRun(&c->dlg_work, c->force_old_ui, [c](std::vector<std::wstring> paths) {
+    AppQueuePaths(c, std::move(paths), c->work_hwnd);
+  });
 
   // clean up
   if (WaitForSingleObject(c->thread_load, 16384) == WAIT_TIMEOUT) {

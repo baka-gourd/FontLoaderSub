@@ -46,7 +46,30 @@ STRINGTABLE
   IDS_DUPLICATE_IDENTICAL "Identical contents (removable copies)"
   IDS_DUPLICATE_VERSIONS "Different versions of the same font name"
   IDS_DUPLICATE_UNKNOWN_VERSION "Unknown version"
+  IDS_MINIMIZE "Minimize"
+  IDS_CANCEL "Cancel"
+  IDS_DETAILS "Details"
   IDS_CLOSE "Close"
+  IDS_HOME_TITLE "Subtitle fonts"
+  IDS_HOME_DESCRIPTION "Load the fonts your subtitles need, without installing them."
+  IDS_ADD_SUBTITLE "Add subtitles"
+  IDS_DROP_HINT "Click to choose ASS / SSA files. You can also drop folders."
+  IDS_DROP_TITLE "Drop subtitles here"
+  IDS_OVERVIEW "Overview"
+  IDS_STAT_LOADED "Loaded"
+  IDS_STAT_FAILED "Failed"
+  IDS_STAT_UNMATCHED "Missing"
+  IDS_STAT_FILES "Font files"
+  IDS_STAT_FACES "Font faces"
+  IDS_STAT_SUBS "Subtitles"
+  IDS_KEEP_OPEN "Keep this app running while watching. Exiting unloads the fonts."
+  IDS_MORE_ACTIONS "More actions"
+  IDS_EXIT_UNLOAD "Unload and exit"
+  IDS_NO_DETAILS "Font loading details will appear here after you add subtitles."
+  IDS_FONT_DETAILS "Font details"
+  IDS_DUPLICATE_PREPARING "Preparing duplicate font details..."
+  IDS_PREVIOUS_PAGE "Previous page"
+  IDS_NEXT_PAGE "Next page"
 }
 
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
@@ -57,6 +80,7 @@ IDR_BTN_MENU MENU
     MENUITEM "&Rebuild index", ID_BTN_RESCAN
     MENUITEM "&Export fonts", ID_BTN_EXPORT
     MENUITEM "Font &deduplication", ID_BTN_DUPLICATE_FONT
+    MENUITEM "&Unload all fonts", ID_BTN_UNLOAD_ALL
     MENUITEM SEPARATOR
     MENUITEM "&Help", ID_BTN_HELP
   }
