@@ -18,7 +18,7 @@
       <Output TaskParameter="ConsoleOutput" PropertyName="DetectedSemanticVersion" />
     </Exec>
     <PropertyGroup>
-      <DetectedSemanticVersion Condition="'$(DetectedSemanticVersion)' == ''">2.0.0</DetectedSemanticVersion>
+      <DetectedSemanticVersion Condition="'$(DetectedSemanticVersion)' == ''">2.5.0</DetectedSemanticVersion>
     </PropertyGroup>
     <MakeDir Directories="$(IntDir)" />
     <WriteLinesToFile File="$(IntDir)fontloadersub_version.h" Overwrite="true" WriteOnlyWhenDifferent="true"

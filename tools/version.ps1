@@ -1,5 +1,5 @@
 param(
-    [string]$FallbackVersion = "2.0.0"
+    [string]$FallbackVersion = "2.5.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +15,15 @@ try {
     }
 
     $version = $tag -replace '^v', ''
+
+    # Use the configured release until a tag reaches that version.
+    $tagVersion = [version](($version -split '[-+]', 2)[0])
+    $baseVersion = [version](($FallbackVersion -split '[-+]', 2)[0])
+    if ($tagVersion -lt $baseVersion) {
+        $FallbackVersion
+        exit 0
+    }
+
     $commitCount = [int](git rev-list "$tag..HEAD" --count)
     $shortHash = git rev-parse --short=8 HEAD
     $dirty = -not [string]::IsNullOrWhiteSpace(

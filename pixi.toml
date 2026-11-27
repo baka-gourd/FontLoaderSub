@@ -3,7 +3,7 @@ authors = ["baka-gourd <36119339+baka-gourd@users.noreply.github.com>"]
 channels = ["conda-forge"]
 name = "FontLoaderSub"
 platforms = ["win-64"]
-version = "2.0.0"
+version = "2.5.0"
 preview = ["pixi-build"]
 
 # MSVC 14.44 keeps the static standard library compatible with Windows 7.
