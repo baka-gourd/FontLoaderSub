@@ -11,7 +11,7 @@
 LANGUAGE LANG_CHINESE, SUBLANG_DEFAULT
 STRINGTABLE
 {
-  IDS_APP_NAME_VER "FontLoaderSub " FONTLOADERSUB_GIT_VERSION
+  IDS_APP_NAME_VER "SubFontLoader " FONTLOADERSUB_GIT_VERSION
   IDS_SHELL_VERB "載入字幕所需字型"
   IDS_SENDTO "FontLoaderSub"
   IDS_LOAD_STAT "%1!i! 個字型載入成功，%2!i! 個出錯，%3!i! 個無匹配。\n索引中有 %4!i! 個字型，%5!i! 個名稱；當前共 %6!i! 個字幕。"
@@ -59,14 +59,19 @@ STRINGTABLE
   IDS_STAT_LOADED "已載入"
   IDS_STAT_FAILED "載入失敗"
   IDS_STAT_UNMATCHED "缺少字型"
-  IDS_STAT_FILES "字型檔案"
-  IDS_STAT_FACES "字型數量"
-  IDS_STAT_SUBS "字幕數量"
+  IDS_LIBRARY_TITLE "字型庫"
+  IDS_LIBRARY_COUNTS "%1!s! 個字型檔案，%2!s! 個字型"
+  IDS_OPEN_LIBRARY "開啟字型庫資料夾"
+  IDS_PICK_FONT_DIR "選擇字型庫"
   IDS_KEEP_OPEN "播放期間請保持程式執行，結束會卸載已載入的字型。"
   IDS_MORE_ACTIONS "更多操作"
   IDS_EXIT_UNLOAD "卸載並結束"
   IDS_NO_DETAILS "新增字幕後，可在這裡查看字型載入詳情。"
   IDS_FONT_DETAILS "字型詳情"
+  IDS_ALL_FONTS "全部字型"
+  IDS_FONT_FILE_MISSING "找不到相符的檔案"
+  IDS_SYSTEM_FONT "已安裝的系統字型"
+  IDS_NO_FILTERED_FONTS "沒有字型符合目前的篩選條件。"
   IDS_DUPLICATE_PREPARING "正在整理重複字型資訊…"
   IDS_PREVIOUS_PAGE "上一頁"
   IDS_NEXT_PAGE "下一頁"
@@ -77,6 +82,10 @@ IDR_BTN_MENU MENU
 {
   POPUP ""
   {
+    POPUP "字型庫"
+    {
+      MENUITEM "選擇資料夾…", ID_BTN_PICK_FONT_DIR
+    }
     MENUITEM "更新索引(&R)", ID_BTN_RESCAN
     MENUITEM "匯出字型(&E)", ID_BTN_EXPORT
     MENUITEM "字型去重(&D)", ID_BTN_DUPLICATE_FONT

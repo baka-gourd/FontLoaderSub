@@ -11,7 +11,7 @@
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 STRINGTABLE
 {
-  IDS_APP_NAME_VER "FontLoaderSub " FONTLOADERSUB_GIT_VERSION
+  IDS_APP_NAME_VER "SubFontLoader " FONTLOADERSUB_GIT_VERSION
   IDS_SHELL_VERB "FontLoaderSub here"
   IDS_SENDTO "FontLoaderSub"
   IDS_LOAD_STAT "%1!i! loaded. %2!i! failed. %3!i! unmatched.\n%4!i! files. %5!i! fonts. %6!i! subs."
@@ -59,14 +59,19 @@ STRINGTABLE
   IDS_STAT_LOADED "Loaded"
   IDS_STAT_FAILED "Failed"
   IDS_STAT_UNMATCHED "Missing"
-  IDS_STAT_FILES "Font files"
-  IDS_STAT_FACES "Font faces"
-  IDS_STAT_SUBS "Subtitles"
+  IDS_LIBRARY_TITLE "Font library"
+  IDS_LIBRARY_COUNTS "%1!s! font files, %2!s! font faces"
+  IDS_OPEN_LIBRARY "Open font library folder"
+  IDS_PICK_FONT_DIR "Choose font library"
   IDS_KEEP_OPEN "Keep this app running while watching. Exiting unloads the fonts."
   IDS_MORE_ACTIONS "More actions"
   IDS_EXIT_UNLOAD "Unload and exit"
   IDS_NO_DETAILS "Font loading details will appear here after you add subtitles."
   IDS_FONT_DETAILS "Font details"
+  IDS_ALL_FONTS "All fonts"
+  IDS_FONT_FILE_MISSING "No matching file"
+  IDS_SYSTEM_FONT "Installed system font"
+  IDS_NO_FILTERED_FONTS "No fonts match this filter."
   IDS_DUPLICATE_PREPARING "Preparing duplicate font details..."
   IDS_PREVIOUS_PAGE "Previous page"
   IDS_NEXT_PAGE "Next page"
@@ -77,6 +82,10 @@ IDR_BTN_MENU MENU
 {
   POPUP ""
   {
+    POPUP "Font library"
+    {
+      MENUITEM "Choose folder...", ID_BTN_PICK_FONT_DIR
+    }
     MENUITEM "&Rebuild index", ID_BTN_RESCAN
     MENUITEM "&Export fonts", ID_BTN_EXPORT
     MENUITEM "Font &deduplication", ID_BTN_DUPLICATE_FONT

@@ -344,7 +344,7 @@ fl_walk_font_enqueue(const wchar_t *path, WIN32_FIND_DATA *data, void *arg) {
   if (!(match_attr && match_ext))
     return FL_OK;
 
-  const wchar_t *tag = path + ctx->base_len + 1;
+  const wchar_t *tag = path + ctx->base_len;
   std::string tag_u8;
   if (!Utf16ToUtf8(tag, &tag_u8))
     return FL_OK;
@@ -415,7 +415,8 @@ static int fl_scan_fonts_mt(FL_LoaderCtx *c) {
 
   FL_FontScanCtx ctx = {};
   ctx.loader = c;
-  ctx.base_len = c->font_path.size();
+  // Include the separator added by directory walking unless the root has one.
+  ctx.base_len = c->font_path.size() + (c->font_path.back() != L'\\');
   ctx.queue = &work_queue;
   ctx.error = &error;
   ctx.cancel = &cancel;
@@ -646,15 +647,15 @@ int fl_scan_fonts(
   c->num_scan_face.store(0, std::memory_order_relaxed);
 
   int r = FlResolvePath(path, &c->font_path);
-  // if path points to a file, find its parent directory
-  if (1) {
-    HANDLE test = CreateFile(
-        c->font_path.c_str(), 0,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (test != INVALID_HANDLE_VALUE) {
+  // A directory is already the library root. File paths use their parent.
+  if (r == FL_OK) {
+    const DWORD attributes = GetFileAttributesW(c->font_path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+      r = FL_OS_ERROR;
+    } else if (!(attributes & FILE_ATTRIBUTE_DIRECTORY)) {
       FlPathParent(&c->font_path);
-      CloseHandle(test);
+      if (!c->font_path.empty() && c->font_path.back() == L':')
+        c->font_path += L'\\';
     }
   }
 

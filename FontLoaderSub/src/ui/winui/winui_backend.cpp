@@ -15,6 +15,7 @@
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <winrt/Windows.Storage.h>
 #include <microsoft.ui.xaml.window.h>
+#include <shellapi.h>
 #include <deque>
 #include <algorithm>
 
@@ -32,7 +33,8 @@ namespace {
 class App;
 App *active = nullptr;
 constexpr int kMinWindowWidth = 960;
-constexpr int kMinWindowHeight = 600;
+constexpr int kMinWindowHeight = 612;
+constexpr int kDefaultWindowHeight = 612;
 constexpr UINT_PTR kWindowSizeSubclass = 0x464C02;
 
 struct DialogRequest {
@@ -44,19 +46,24 @@ struct DialogRequest {
 std::wstring ButtonLabel(std::wstring value) {
   // TaskDialog accelerators are not literal text in XAML controls.
   for (size_t pos; (pos = value.find(L"(&")) != std::wstring::npos; ) {
-    if (pos + 3 >= value.size() || value[pos + 3] != L')')
+    if (pos + 3 >= value.size() || value[pos + 2] == L'&' || value[pos + 3] != L')')
       break;
     value.erase(pos, 4);
   }
-  for (size_t pos = 0; (pos = value.find(L'&', pos)) != std::wstring::npos; )
+  for (size_t pos = 0; (pos = value.find(L'&', pos)) != std::wstring::npos; ) {
     value.erase(pos, 1);
+    if (pos < value.size() && value[pos] == L'&')
+      ++pos;
+  }
   return value;
 }
 
 class App : public ApplicationT<App, IXamlMetadataProvider> {
 public:
-  App(const AppUiPage &page, const AppUiNotify &notify, AppUiLoadPaths load_paths)
-      : initial_(page), notify_(notify), load_paths_(std::move(load_paths)) {}
+  App(const AppUiPage &page, const AppUiNotify &notify, AppUiLoadPaths load_paths,
+      const std::wstring &font_path)
+      : initial_(page), notify_(notify), load_paths_(std::move(load_paths)),
+        font_path_(font_path) {}
 
   // Expose built-in control metadata without a XAML compiler or MSBuild project.
   IXamlType GetXamlType(Windows::UI::Xaml::Interop::TypeName const &type) {
@@ -71,14 +78,20 @@ public:
 
   void OnLaunched(LaunchActivatedEventArgs const &) {
     // Fall back only before notifying the controller and starting its worker.
+    const char *stage = "resources";
     try {
       Resources().MergedDictionaries().Append(XamlControlsResources());
+      stage = "window";
       window_ = Window();
       check_hresult(window_.as<IWindowNative>()->get_WindowHandle(&hwnd_));
       SetWindowSubclass(hwnd_, WindowSizeProc, kWindowSizeSubclass,
           reinterpret_cast<DWORD_PTR>(this));
       active = this;
+
+      // Report which initialization step failed before selecting the fallback.
+      stage = "layout";
       Build();
+      stage = "activation";
       Navigate(initial_);
       window_.Activate();
 
@@ -112,8 +125,9 @@ public:
       timer_.Start();
     } catch (const hresult_error &error) {
       (void)error;
-      SPDLOG_WARN("WinUI window initialization failed: {:#x}",
-          static_cast<unsigned>(error.code().value));
+      (void)stage;
+      SPDLOG_WARN("WinUI {} initialization failed ({:#x}): {}", stage,
+          static_cast<unsigned>(error.code().value), to_string(error.message()));
       Exit();
     }
   }
@@ -137,9 +151,6 @@ public:
     body_.Text(page.body);
     progress_.Visibility(busy_ ? Visibility::Visible : Visibility::Collapsed);
     progress_.IsIndeterminate(busy_);
-    details_.Text(page.details.empty() ? Resource(IDS_NO_DETAILS) : hstring(page.details));
-    expander_.Header(box_value(Resource(IDS_FONT_DETAILS)));
-    expander_.IsExpanded(page.expanded);
     status_icon_.Glyph(busy_ ? L"\xE895" : L"\xE73E");
 
     // The footer's only action is the project's existing repository hyperlink.
@@ -193,37 +204,89 @@ public:
 
   void SetStats(const AppUiStats &stats) {
     // Announce counts by label, and avoid rewriting unchanged values every timer tick.
-    for (size_t i = 0; i < stats.size(); ++i) {
+    for (size_t i = 0; i < counts_.size(); ++i) {
       const auto value = to_hstring(stats[i]);
       if (counts_[i].Text() == value)
         continue;
       counts_[i].Text(value);
       Automation::AutomationProperties::SetName(counts_[i], labels_[i] + L": " + value);
     }
+
+    const std::array totals{stats[3], stats[4]};
+    if (totals != library_totals_) {
+      library_totals_ = totals;
+      UpdateLibraryCounts();
+    }
+  }
+
+  void SetFontResults(std::vector<AppUiFontResult> results) {
+    // Surface failures first and allow manual filtering after the batch completes.
+    const bool failed = std::any_of(results.begin(), results.end(), [](const auto &result) {
+      return result.status == AppUiFontStatus::Failed;
+    });
+    font_results_ = std::move(results);
+
+    // SelectionChanged refreshes the list when the default selection moves.
+    const int selection = 1 + static_cast<int>(
+        failed ? AppUiFontStatus::Failed : AppUiFontStatus::Loaded);
+    if (font_filter_.SelectedIndex() == selection)
+      RefreshFontResults();
+    else
+      font_filter_.SelectedIndex(selection);
+  }
+
+  void SetLibraryPath(const std::wstring &path) {
+    font_path_ = path;
+    library_title_.Text(Resource(IDS_LIBRARY_TITLE) + L" (" + hstring(font_path_) + L")");
+    UpdateLibraryCounts();
   }
 
   void SetMenu(HMENU menu) {
-    // Keep enabled states and command IDs sourced from the shared controller.
     MenuFlyout flyout;
-    for (int i = 0; i < GetMenuItemCount(menu); ++i) {
-      const UINT id = GetMenuItemID(menu, i);
-      if (id == 0) {
-        flyout.Items().Append(MenuFlyoutSeparator());
-        continue;
-      }
-
-      wchar_t text[256] = {};
-      GetMenuStringW(menu, i, text, _countof(text), MF_BYPOSITION);
-      MenuFlyoutItem item;
-      item.Text(ButtonLabel(text));
-      item.IsEnabled(!(GetMenuState(menu, i, MF_BYPOSITION) & (MF_DISABLED | MF_GRAYED)));
-      item.Click([this, id](auto &&, auto &&) { notify_(hwnd_, TDN_BUTTON_CLICKED, id, 0); });
-      flyout.Items().Append(item);
-    }
+    AppendMenuItems(menu, flyout.Items());
     tools_.Flyout(flyout);
   }
 
 private:
+  void AppendMenuItems(HMENU menu,
+      const Windows::Foundation::Collections::IVector<MenuFlyoutItemBase> &items) {
+    for (int i = 0; i < GetMenuItemCount(menu); ++i) {
+      // Native menu metadata distinguishes commands, submenus and separators.
+      MENUITEMINFOW info = {sizeof info};
+      info.fMask = MIIM_FTYPE | MIIM_ID | MIIM_SUBMENU | MIIM_STATE;
+      if (!GetMenuItemInfoW(menu, i, TRUE, &info))
+        continue;
+      if (info.fType & MFT_SEPARATOR) {
+        items.Append(MenuFlyoutSeparator());
+        continue;
+      }
+
+      // Copy localized labels at their full length, including folder paths.
+      const int length = GetMenuStringW(menu, i, nullptr, 0, MF_BYPOSITION);
+      std::wstring text(length + 1, L'\0');
+      text.resize(GetMenuStringW(menu, i, text.data(), length + 1, MF_BYPOSITION));
+      const auto label = ButtonLabel(std::move(text));
+      if (info.hSubMenu) {
+        MenuFlyoutSubItem item;
+        item.Text(label);
+        AppendMenuItems(info.hSubMenu, item.Items());
+        items.Append(item);
+        continue;
+      }
+
+      // A check mark identifies the active library without changing menu behavior.
+      MenuFlyoutItem item;
+      item.Text(label);
+      item.IsEnabled(!(info.fState & MFS_DISABLED));
+      if (info.fState & MFS_CHECKED)
+        item.Icon(SymbolIcon(Symbol::Accept));
+      item.Click([this, id = info.wID](auto &&, auto &&) {
+        notify_(hwnd_, TDN_BUTTON_CLICKED, id, 0);
+      });
+      items.Append(item);
+    }
+  }
+
   static LRESULT CALLBACK WindowSizeProc(HWND window, UINT message, WPARAM wparam,
       LPARAM lparam, UINT_PTR id, DWORD_PTR data) {
     // Enforce the same logical minimum while resizing on any DPI-scaled monitor.
@@ -273,7 +336,7 @@ private:
 
   void RestoreWindowSize() {
     // Invalid or absent settings use the default size without blocking startup.
-    DWORD size[] = {kMinWindowWidth, kMinWindowHeight};
+    DWORD size[] = {kMinWindowWidth, kDefaultWindowHeight};
     DWORD saved[2] = {}, bytes = sizeof saved;
     if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\FontLoaderSub", L"WinuiWindowSize",
             RRF_RT_REG_BINARY, nullptr, saved, &bytes) == ERROR_SUCCESS &&
@@ -305,38 +368,99 @@ private:
   }
 
   void InitializeMetrics() {
-    // Counts use native controls and explicit accessible names in each locale.
-    const UINT ids[] = {IDS_STAT_LOADED, IDS_STAT_FAILED, IDS_STAT_UNMATCHED,
-        IDS_STAT_FILES, IDS_STAT_FACES, IDS_STAT_SUBS};
+    // Keep the three status labels, icons and filter choices in the same order.
+    const UINT ids[] = {IDS_STAT_LOADED, IDS_STAT_FAILED, IDS_STAT_UNMATCHED};
+    const PCWSTR styles[] = {L"LoadedFontIcon", L"FailedFontIcon", L"MissingFontIcon"};
+    font_filter_.Items().Append(box_value(Resource(IDS_ALL_FONTS)));
     for (size_t i = 0; i < counts_.size(); ++i) {
       counts_[i] = root_.FindName(L"Stat" + to_hstring(i)).as<TextBlock>();
       labels_[i] = Resource(ids[i]);
+      font_icons_[i] = root_.Resources().Lookup(box_value(styles[i])).as<Style>();
+      font_filter_.Items().Append(box_value(labels_[i]));
       root_.FindName(L"Label" + to_hstring(i)).as<TextBlock>().Text(labels_[i]);
       Automation::AutomationProperties::SetName(counts_[i], labels_[i] + L": 0");
     }
 
-    // Collection and loading statistics reflow independently on narrow windows.
-    for (const auto *name : {L"CollectionMetrics", L"Metrics"}) {
-      auto metrics = root_.FindName(name).as<Grid>();
-      metrics.SizeChanged([](Windows::Foundation::IInspectable const &sender,
-          SizeChangedEventArgs const &args) {
-        auto grid = sender.as<Grid>();
-        const uint32_t columns = args.NewSize().Width < 360 ? 1u : 3u;
-        // Empty fallback rows must not add vertical gaps in the three-column layout.
-        grid.RowSpacing(columns == 1 ? 16 : 0);
-        for (uint32_t i = 0; i < grid.Children().Size(); ++i) {
-          grid.ColumnDefinitions().GetAt(i).Width({i < columns ? 1.0 : 0.0, GridUnitType::Star});
-          Grid::SetColumn(grid.Children().GetAt(i).as<FrameworkElement>(), static_cast<int>(i % columns));
-          Grid::SetRow(grid.Children().GetAt(i).as<FrameworkElement>(), static_cast<int>(i / columns));
-        }
-      });
-    }
+    // The repeater only populates rows within the scroll viewport.
+    font_rows_.ElementPrepared([this](ItemsRepeater const &sender,
+        ItemsRepeaterElementPreparedEventArgs const &args) {
+      const auto index = unbox_value<uint32_t>(sender.ItemsSourceView().GetAt(args.Index()));
+      RenderFontRow(args.Element().as<FrameworkElement>(), font_results_[index]);
+    });
+    font_filter_.SelectionChanged([this](auto &&, auto &&) { RefreshFontResults(); });
+    font_filter_.SelectedIndex(1 + static_cast<int>(AppUiFontStatus::Loaded));
+  }
 
+  void RefreshFontResults() {
+    // Keep the model stable and pass only filtered indices to the virtualized list.
+    using Windows::Foundation::IInspectable;
+    const int selection = font_filter_.SelectedIndex();
+    std::vector<IInspectable> items;
+    for (uint32_t i = 0; i < font_results_.size(); ++i) {
+      if (selection <= 0 || selection == 1 + static_cast<int>(font_results_[i].status))
+        items.push_back(box_value(i));
+    }
+    const bool empty = items.empty();
+    font_rows_.ItemsSource(single_threaded_vector(std::move(items)));
+    font_empty_.Visibility(empty ? Visibility::Visible : Visibility::Collapsed);
+    if (empty)
+      font_empty_.Text(Resource(font_results_.empty() ? IDS_NO_DETAILS : IDS_NO_FILTERED_FONTS));
+  }
+
+  void RenderFontRow(const FrameworkElement &row, const AppUiFontResult &result) {
+    // Announce the status alongside the font name for screen readers.
+    const auto status = static_cast<size_t>(result.status);
+    const auto file = result.file.empty()
+        ? Resource(result.status == AppUiFontStatus::Missing ? IDS_FONT_FILE_MISSING : IDS_SYSTEM_FONT)
+        : hstring(result.file);
+    const auto name = row.FindName(L"FontName").as<TextBlock>();
+    name.Text(result.name);
+    row.FindName(L"FontFile").as<TextBlock>().Text(file);
+    row.FindName(L"FontState").as<FontIcon>().Style(font_icons_[status]);
+    Automation::AutomationProperties::SetName(name, name.Text() + L", " + labels_[status]);
+  }
+
+  void UpdateLibraryCounts() {
+    // Group digits using the user's number format and discard the fractional part.
+    auto format_integer = [](unsigned long long value) {
+      auto digits = std::to_wstring(value);
+      wchar_t formatted[64], decimal[8];
+      if (GetNumberFormatEx(LOCALE_NAME_USER_DEFAULT, 0, digits.c_str(), nullptr,
+              formatted, _countof(formatted)) &&
+          GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_SDECIMAL, decimal, _countof(decimal))) {
+        digits.assign(formatted);
+        digits = digits.substr(0, digits.rfind(decimal));
+      }
+      return digits;
+    };
+
+    // Localize the order and unit names independently of number formatting.
+    const auto files = format_integer(library_totals_[0]);
+    const auto faces = format_integer(library_totals_[1]);
+    DWORD_PTR args[] = {reinterpret_cast<DWORD_PTR>(files.c_str()),
+        reinterpret_cast<DWORD_PTR>(faces.c_str())};
+    wchar_t text[128] = {};
+    FormatMessageW(FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY,
+        Resource(IDS_LIBRARY_COUNTS).c_str(), 0, 0, text, _countof(text),
+        reinterpret_cast<va_list *>(args));
+    library_counts_.Text(text);
+    Automation::AutomationProperties::SetName(library_,
+        Resource(IDS_OPEN_LIBRARY) + L", " + hstring(font_path_) + L", " + library_counts_.Text());
+  }
+
+  void OpenLibrary() {
+    // Send the active folder directly to the system file manager.
+    if (reinterpret_cast<INT_PTR>(
+            ShellExecuteW(hwnd_, L"open", font_path_.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+      SPDLOG_WARN("Could not open font library folder");
+  }
+
+  void InitializePageWidth() {
     // Explicit viewport-based width avoids ScrollViewer's unconstrained measurement.
     auto scroll = root_.FindName(L"PageScroll").as<ScrollViewer>();
-    scroll.SizeChanged([this](auto &&, SizeChangedEventArgs const &args) {
+    auto content = root_.FindName(L"PageContent").as<StackPanel>();
+    scroll.SizeChanged([content](auto &&, SizeChangedEventArgs const &args) {
       const double padding = args.NewSize().Width < 520 ? 16 : 32;
-      auto content = root_.FindName(L"PageContent").as<StackPanel>();
       content.Width((std::clamp)(args.NewSize().Width - padding * 2, 0.0, 960.0));
       content.Margin({padding, 16, padding, 24});
     });
@@ -539,12 +663,29 @@ private:
 <Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="Transparent">
   <Grid.Resources>
-    <Style x:Key="StatCard" TargetType="Border">
-      <Setter Property="Padding" Value="12"/>
-      <Setter Property="CornerRadius" Value="8"/>
-      <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}"/>
-      <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+    <!-- Result rows use theme colors for their status glyphs. -->
+    <Style x:Key="LoadedFontIcon" TargetType="FontIcon">
+      <Setter Property="Glyph" Value="&#xE930;"/>
+      <Setter Property="Foreground" Value="{ThemeResource SystemFillColorSuccessBrush}"/>
+      <Setter Property="FontSize" Value="14"/>
+    </Style>
+    <Style x:Key="FailedFontIcon" TargetType="FontIcon">
+      <Setter Property="Glyph" Value="&#xE946;"/>
+      <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/>
+      <Setter Property="FontSize" Value="14"/>
+    </Style>
+    <Style x:Key="MissingFontIcon" TargetType="FontIcon">
+      <Setter Property="Glyph" Value="&#xE7BA;"/>
+      <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCautionBrush}"/>
+      <Setter Property="FontSize" Value="14"/>
+    </Style>
+
+    <!-- Fluent typography gives the totals and their labels a common scale. -->
+    <Style x:Key="MetricLabel" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="16"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/>
     </Style>
   </Grid.Resources>
   <!-- The viewport constrains the page width; cards never measure beyond it. -->
@@ -566,20 +707,25 @@ private:
                 HorizontalScrollMode="Disabled" HorizontalContentAlignment="Stretch">
     <StackPanel x:Name="PageContent" Margin="32,16,32,24" Spacing="16" Width="0"
                 HorizontalAlignment="Center">
-      <Grid x:Name="CollectionMetrics" ColumnSpacing="16" RowSpacing="16">
-        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <Border Style="{StaticResource StatCard}"><StackPanel Spacing="4">
-          <TextBlock x:Name="Stat3" Text="0" FontSize="28" FontWeight="SemiBold"/>
-          <TextBlock x:Name="Label3" TextWrapping="Wrap"/></StackPanel></Border>
-        <!-- Each statistic retains a label when columns reflow. -->
-        <Border Grid.Column="1" Style="{StaticResource StatCard}"><StackPanel Spacing="4">
-          <TextBlock x:Name="Stat4" Text="0" FontSize="28" FontWeight="SemiBold"/>
-          <TextBlock x:Name="Label4" TextWrapping="Wrap"/></StackPanel></Border>
-        <Border Grid.Column="2" Style="{StaticResource StatCard}"><StackPanel Spacing="4">
-          <TextBlock x:Name="Stat5" Text="0" FontSize="28" FontWeight="SemiBold"/>
-          <TextBlock x:Name="Label5" TextWrapping="Wrap"/></StackPanel></Border>
-      </Grid>
+      <Button x:Name="Library" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+              Padding="16,12" CornerRadius="8"
+              Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+        <Grid ColumnSpacing="12">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <FontIcon Glyph="&#xE8F1;" FontSize="20"/>
+          <!-- The library description stays with its title as the card resizes. -->
+          <StackPanel Grid.Column="1" Spacing="2">
+            <TextBlock x:Name="LibraryTitle" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+            <TextBlock x:Name="LibraryCounts" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+          </StackPanel>
+          <FontIcon Grid.Column="2" Glyph="&#xE8A7;" FontSize="14"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+        </Grid>
+      </Button>
       <!-- A full-size drop target remains a native button for keyboard activation. -->
       <Button x:Name="Add" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
               Padding="0" BorderThickness="0" CornerRadius="8" UseSystemFocusVisuals="True"
@@ -599,7 +745,8 @@ private:
           </StackPanel>
         </Grid>
       </Button>
-      <!-- Loading overview is placed directly on Mica, without an enclosing card. -->
+)" LR"(
+      <!-- The overview header holds commands and progress for the current operation. -->
       <StackPanel Spacing="16">
         <Grid ColumnSpacing="12">
           <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -609,41 +756,67 @@ private:
         </Grid>
         <!-- The status and cancel command remain available while loading. -->
         <StackPanel Orientation="Horizontal" Spacing="8">
-          <FontIcon x:Name="StatusIcon" FontSize="16"/>
+          <FontIcon x:Name="StatusIcon" FontSize="16" VerticalAlignment="Center"/>
           <TextBlock x:Name="Heading" AutomationProperties.LiveSetting="Polite" VerticalAlignment="Center"/>
           <StackPanel x:Name="Buttons" Orientation="Horizontal" Spacing="8"/>
         </StackPanel>
-        <ProgressBar x:Name="Progress" AutomationProperties.Name="FontLoaderSub"/>
-        <!-- Loading counts form a second, independent group of three. -->
-        <Grid x:Name="Metrics" ColumnSpacing="16" RowSpacing="16">
-          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
-          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-          <Border Style="{StaticResource StatCard}"><StackPanel Spacing="4">
-          <TextBlock x:Name="Stat0" Text="0" FontSize="24" FontWeight="SemiBold"/>
-            <TextBlock x:Name="Label0" TextWrapping="Wrap"/></StackPanel></Border>
-          <!-- Failure and missing counts use text labels as well as numeric values. -->
-          <Border Grid.Column="1" Style="{StaticResource StatCard}"><StackPanel Spacing="4">
-          <TextBlock x:Name="Stat1" Text="0" FontSize="24" FontWeight="SemiBold"/>
-            <TextBlock x:Name="Label1" TextWrapping="Wrap"/></StackPanel></Border>
-          <Border Grid.Column="2" Style="{StaticResource StatCard}"><StackPanel Spacing="4">
-          <TextBlock x:Name="Stat2" Text="0" FontSize="24" FontWeight="SemiBold"/>
-            <TextBlock x:Name="Label2" TextWrapping="Wrap"/></StackPanel></Border>
-        </Grid>
+        <ProgressBar x:Name="Progress" AutomationProperties.Name="SubFontLoader"/>
       </StackPanel>
-      <!-- Long logs stay selectable without expanding the entire window. -->
-      <Expander x:Name="DetailsExpander" HorizontalAlignment="Stretch"
-                HorizontalContentAlignment="Stretch">
-        <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled">
-          <TextBlock x:Name="Details" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
-        </ScrollViewer>
-      </Expander>
+      <!-- Results, their totals and the filter share a single card. -->
+      <Border Padding="16" CornerRadius="8" BorderThickness="1"
+              Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+        <StackPanel Spacing="12">
+          <Grid ColumnSpacing="12" RowSpacing="4">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <TextBlock x:Name="Label0" Style="{StaticResource MetricLabel}"/>
+            <TextBlock x:Name="Label1" Grid.Column="1" Style="{StaticResource MetricLabel}"/>
+            <TextBlock x:Name="Label2" Grid.Column="2" Style="{StaticResource MetricLabel}"/>
+
+            <!-- Shared rows keep the counts aligned when a localized label wraps. -->
+            <TextBlock x:Name="Stat0" Grid.Row="1" Text="0" FontSize="32"
+                       Style="{StaticResource TitleTextBlockStyle}"/>
+            <TextBlock x:Name="Stat1" Grid.Row="1" Grid.Column="1" Text="0" FontSize="32"
+                       Style="{StaticResource TitleTextBlockStyle}"/>
+            <TextBlock x:Name="Stat2" Grid.Row="1" Grid.Column="2" Text="0" FontSize="32"
+                       Style="{StaticResource TitleTextBlockStyle}"/>
+          </Grid>
+
+          <!-- The filter's selected value is its visible label. -->
+          <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+          <ComboBox x:Name="FontFilter" HorizontalAlignment="Stretch"/>
+          <TextBlock x:Name="FontEmpty" TextWrapping="Wrap"
+                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+          <ItemsRepeater x:Name="FontRows">
+            <ItemsRepeater.ItemTemplate>
+              <DataTemplate>
+                <Grid Padding="0,6" ColumnSpacing="12">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <!-- Names and filenames wrap within the space between the icons. -->
+                  <FontIcon Glyph="&#xE8E9;" FontSize="16"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                  <StackPanel Grid.Column="1">
+                    <TextBlock x:Name="FontName" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="FontFile" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                  </StackPanel>
+                  <FontIcon x:Name="FontState" Grid.Column="2" VerticalAlignment="Center"/>
+                </Grid>
+              </DataTemplate>
+            </ItemsRepeater.ItemTemplate>
+          </ItemsRepeater>
+        </StackPanel>
+      </Border>
     </StackPanel>
   </ScrollViewer>
   <!-- The system caption buttons own minimize and close; the footer is informational. -->
   <StackPanel Grid.Row="2" Margin="32,12,32,20" Spacing="12">
     <TextBlock x:Name="KeepOpen" TextWrapping="Wrap" FontSize="12"
                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-    <HyperlinkButton x:Name="Footer" Content="FontLoaderSub &#xB7; GPLv2" FontSize="12" Padding="0"/>
+    <HyperlinkButton x:Name="Footer" Content="SubFontLoader &#xB7; GPLv2" FontSize="12" Padding="0"/>
   </StackPanel>
 </Grid>)").as<Grid>();
 
@@ -653,8 +826,6 @@ private:
     heading_ = root_.FindName(L"Heading").as<TextBlock>();
     body_ = TextBlock();
     progress_ = root_.FindName(L"Progress").as<ProgressBar>();
-    details_ = root_.FindName(L"Details").as<TextBlock>();
-    expander_ = root_.FindName(L"DetailsExpander").as<Expander>();
     buttons_ = root_.FindName(L"Buttons").as<StackPanel>();
     footer_ = root_.FindName(L"Footer").as<HyperlinkButton>();
 
@@ -669,6 +840,20 @@ private:
     tools_ = root_.FindName(L"Tools").as<DropDownButton>();
     status_icon_ = root_.FindName(L"StatusIcon").as<FontIcon>();
 
+    // Both cards use native focus and accessibility behavior for their controls.
+    library_ = root_.FindName(L"Library").as<Button>();
+    library_title_ = root_.FindName(L"LibraryTitle").as<TextBlock>();
+    library_counts_ = root_.FindName(L"LibraryCounts").as<TextBlock>();
+    ToolTipService::SetToolTip(library_, box_value(Resource(IDS_OPEN_LIBRARY)));
+    library_.Click([this](auto &&, auto &&) { OpenLibrary(); });
+    SetLibraryPath(font_path_);
+    font_filter_ = root_.FindName(L"FontFilter").as<ComboBox>();
+    Automation::AutomationProperties::SetName(font_filter_, Resource(IDS_FONT_DETAILS));
+    font_rows_ = root_.FindName(L"FontRows").as<ItemsRepeater>();
+    font_empty_ = root_.FindName(L"FontEmpty").as<TextBlock>();
+    InitializeMetrics();
+    InitializePageWidth();
+
     // The primary action is also reachable without a pointer through Ctrl+O.
     Automation::AutomationProperties::SetName(add_, Resource(IDS_ADD_SUBTITLE));
     tools_.Content(box_value(Resource(IDS_MORE_ACTIONS)));
@@ -677,7 +862,6 @@ private:
     open.Key(Windows::System::VirtualKey::O);
     open.Modifiers(Windows::System::VirtualKeyModifiers::Control);
     add_.KeyboardAccelerators().Append(open);
-    InitializeMetrics();
     drop_highlight_ = root_.FindName(L"DropHighlight").as<UIElement>();
 
     // XAML drag-and-drop accepts subtitles and folders using the shared loader.
@@ -736,22 +920,30 @@ private:
   AppUiPage initial_;
   AppUiNotify notify_;
   AppUiLoadPaths load_paths_;
+  std::wstring font_path_;
   XamlControlsXamlMetaDataProvider provider_;
   Window window_{nullptr};
   DispatcherTimer timer_{nullptr};
-  TextBlock heading_{nullptr}, body_{nullptr}, details_{nullptr};
+  TextBlock heading_{nullptr}, body_{nullptr};
   ProgressBar progress_{nullptr};
-  Expander expander_{nullptr};
   StackPanel buttons_{nullptr};
   HyperlinkButton footer_{nullptr};
   Grid root_{nullptr}, titlebar_{nullptr};
   TextBlock caption_{nullptr};
-  Button add_{nullptr};
+  Button add_{nullptr}, library_{nullptr};
   DropDownButton tools_{nullptr};
   FontIcon status_icon_{nullptr};
   UIElement drop_highlight_{nullptr};
-  std::array<TextBlock, 6> counts_{nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
-  std::array<hstring, 6> labels_;
+  // The result model is replaced on the UI thread after the worker stops.
+  TextBlock library_title_{nullptr}, library_counts_{nullptr}, font_empty_{nullptr};
+  std::array<unsigned long long, 2> library_totals_{};
+  std::array<TextBlock, 3> counts_{nullptr, nullptr, nullptr};
+  std::array<hstring, 3> labels_;
+  std::array<Style, 3> font_icons_{nullptr, nullptr, nullptr};
+  ComboBox font_filter_{nullptr};
+  ItemsRepeater font_rows_{nullptr};
+  std::vector<AppUiFontResult> font_results_;
+
   ContentDialog dialog_{nullptr};
   std::wstring dialog_details_;
   std::vector<size_t> detail_offsets_;
@@ -766,7 +958,8 @@ private:
 };
 } // namespace
 
-bool WinuiRun(const AppUiPage &page, const AppUiNotify &notify, AppUiLoadPaths load_paths) {
+bool WinuiRun(const AppUiPage &page, const AppUiNotify &notify,
+    AppUiLoadPaths load_paths, const std::wstring &font_path) {
   // No WinRT call is made on old Windows or when the runtime is unavailable.
   WinuiRuntime runtime;
   if (!runtime.Initialize())
@@ -778,7 +971,9 @@ bool WinuiRun(const AppUiPage &page, const AppUiNotify &notify, AppUiLoadPaths l
   try {
     init_apartment(apartment_type::single_threaded);
     apartment = true;
-    Application::Start([&](auto &&) { app = make_self<App>(page, notify, std::move(load_paths)); });
+    Application::Start([&](auto &&) {
+      app = make_self<App>(page, notify, std::move(load_paths), font_path);
+    });
     started = app && app->Started();
   } catch (const hresult_error &error) {
     (void)error;
@@ -818,6 +1013,14 @@ bool WinuiHasDialog() {
 
 void WinuiSetStats(const AppUiStats &stats) {
   active->SetStats(stats);
+}
+
+void WinuiSetFontResults(std::vector<AppUiFontResult> results) {
+  active->SetFontResults(std::move(results));
+}
+
+void WinuiSetLibraryPath(const std::wstring &path) {
+  active->SetLibraryPath(path);
 }
 
 void WinuiSetMenu(HMENU menu) {

@@ -17,8 +17,16 @@
 
 // Keep the existing controller callbacks independent of the window renderer.
 using AppUiLoadPaths = std::function<void(std::vector<std::wstring>)>;
-using AppUiStats = std::array<unsigned long long, 6>;
-HRESULT AppUiRun(const TASKDIALOGCONFIG *config, bool force_old, AppUiLoadPaths load_paths);
+using AppUiStats = std::array<unsigned long long, 5>;
+
+enum class AppUiFontStatus { Loaded, Failed, Missing };
+struct AppUiFontResult {
+  AppUiFontStatus status;
+  std::wstring name, file;
+};
+
+HRESULT AppUiRun(const TASKDIALOGCONFIG *config, bool force_old,
+    AppUiLoadPaths load_paths, const std::wstring &font_path);
 void AppUiNavigate(HWND window, const TASKDIALOGCONFIG *config);
 void AppUiSetText(HWND window, TASKDIALOG_ELEMENTS element, PCWSTR text);
 void AppUiStartProgress(HWND window);
@@ -31,4 +39,6 @@ bool AppUiShowDialog(const TASKDIALOGCONFIG *config,
 void AppUiNavigateDialog(HWND window, const TASKDIALOGCONFIG *config);
 bool AppUiHasDialog();
 void AppUiSetStats(HWND window, const AppUiStats &stats);
+void AppUiSetFontResults(HWND window, std::vector<AppUiFontResult> results);
+void AppUiSetLibraryPath(HWND window, const std::wstring &path);
 void AppUiSetMenu(HWND window, HMENU menu);

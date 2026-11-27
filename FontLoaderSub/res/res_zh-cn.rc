@@ -11,7 +11,7 @@
 LANGUAGE LANG_CHINESE, SUBLANG_SYS_DEFAULT
 STRINGTABLE
 {
-  IDS_APP_NAME_VER "FontLoaderSub " FONTLOADERSUB_GIT_VERSION
+  IDS_APP_NAME_VER "SubFontLoader " FONTLOADERSUB_GIT_VERSION
   IDS_SHELL_VERB "加载字幕所需字体"
   IDS_SENDTO "FontLoaderSub"
   IDS_LOAD_STAT "%1!i! 个字体加载成功，%2!i! 个出错，%3!i! 个无匹配。\n索引中有 %4!i! 个字体，%5!i! 种名称；当前共 %6!i! 个字幕。"
@@ -59,14 +59,19 @@ STRINGTABLE
   IDS_STAT_LOADED "已加载"
   IDS_STAT_FAILED "加载失败"
   IDS_STAT_UNMATCHED "缺失字体"
-  IDS_STAT_FILES "字体文件"
-  IDS_STAT_FACES "字体数量"
-  IDS_STAT_SUBS "字幕数量"
+  IDS_LIBRARY_TITLE "字体库"
+  IDS_LIBRARY_COUNTS "%1!s! 个字体文件，%2!s! 个字体"
+  IDS_OPEN_LIBRARY "打开字体库文件夹"
+  IDS_PICK_FONT_DIR "选择字体库"
   IDS_KEEP_OPEN "播放期间请保持程序运行，退出会卸载已加载的字体。"
   IDS_MORE_ACTIONS "更多操作"
   IDS_EXIT_UNLOAD "卸载并退出"
   IDS_NO_DETAILS "添加字幕后，可在这里查看字体加载详情。"
   IDS_FONT_DETAILS "字体详情"
+  IDS_ALL_FONTS "全部字体"
+  IDS_FONT_FILE_MISSING "未找到匹配文件"
+  IDS_SYSTEM_FONT "已安装的系统字体"
+  IDS_NO_FILTERED_FONTS "当前筛选条件下没有字体。"
   IDS_DUPLICATE_PREPARING "正在整理重复字体信息…"
   IDS_PREVIOUS_PAGE "上一页"
   IDS_NEXT_PAGE "下一页"
@@ -77,6 +82,10 @@ IDR_BTN_MENU MENU
 {
   POPUP ""
   {
+    POPUP "字体库"
+    {
+      MENUITEM "选择文件夹…", ID_BTN_PICK_FONT_DIR
+    }
     MENUITEM "更新索引(&R)", ID_BTN_RESCAN
     MENUITEM "导出字体(&E)", ID_BTN_EXPORT
     MENUITEM "字体去重(&D)", ID_BTN_DUPLICATE_FONT

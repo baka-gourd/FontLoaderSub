@@ -31,14 +31,10 @@ AppUiPage MakePage(const TASKDIALOGCONFIG &config) {
   page.heading = Text(config, config.pszMainInstruction);
   page.body = Text(config, config.pszContent);
   page.details = Text(config, config.pszExpandedInformation);
-  page.details_label = Text(config, config.pszCollapsedControlText);
-  if (page.details_label.empty())
-    page.details_label = Text(config, MAKEINTRESOURCEW(IDS_DETAILS));
   page.footer = Text(config, config.pszFooter);
 
   // Native and modern pages use the same button IDs and controller actions.
   page.busy = (config.dwFlags & TDF_CALLBACK_TIMER) != 0;
-  page.expanded = (config.dwFlags & TDF_EXPANDED_BY_DEFAULT) != 0;
   page.command_links = (config.dwFlags & TDF_USE_COMMAND_LINKS) != 0;
   page.confirmation = config.pszMainInstruction == MAKEINTRESOURCEW(IDS_MISSING_FONT);
   page.default_button = config.nDefaultButton;
@@ -69,14 +65,15 @@ HRESULT Notify(HWND window, UINT event, WPARAM wparam, LPARAM lparam) {
 #endif
 } // namespace
 
-HRESULT AppUiRun(const TASKDIALOGCONFIG *config, bool force_old, AppUiLoadPaths load_paths) {
+HRESULT AppUiRun(const TASKDIALOGCONFIG *config, bool force_old,
+    AppUiLoadPaths load_paths, const std::wstring &font_path) {
 #ifdef FONTLOADERSUB_WINUI
   // The environment override also makes the compatibility UI accessible.
   wchar_t preference[16] = {};
   GetEnvironmentVariableW(L"FONTLOADERSUB_UI", preference, _countof(preference));
   current_page = config;
   if (!force_old && _wcsicmp(preference, L"win32") != 0 &&
-      WinuiRun(MakePage(*config), Notify, std::move(load_paths)))
+      WinuiRun(MakePage(*config), Notify, std::move(load_paths), font_path))
     return S_OK;
   modern_window = nullptr;
 #endif
@@ -159,6 +156,20 @@ void AppUiSetStats(HWND window, const AppUiStats &stats) {
 #ifdef FONTLOADERSUB_WINUI
   if (AppUiIsModern(window))
     WinuiSetStats(stats);
+#endif
+}
+
+void AppUiSetFontResults(HWND window, std::vector<AppUiFontResult> results) {
+#ifdef FONTLOADERSUB_WINUI
+  if (AppUiIsModern(window))
+    WinuiSetFontResults(std::move(results));
+#endif
+}
+
+void AppUiSetLibraryPath(HWND window, const std::wstring &path) {
+#ifdef FONTLOADERSUB_WINUI
+  if (AppUiIsModern(window))
+    WinuiSetLibraryPath(path);
 #endif
 }
 

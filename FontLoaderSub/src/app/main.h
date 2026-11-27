@@ -59,6 +59,8 @@ typedef struct {
   std::wstring log;
   std::wstring font_path;
   std::wstring full_exe_path;
+  std::vector<std::wstring> recent_font_dirs;
+  bool font_path_changed;
 
   HWND work_hwnd;
   HWND hwnd_message;  // hidden message-only window for drag-drop

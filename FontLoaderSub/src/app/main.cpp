@@ -3,9 +3,11 @@
 
 #include <Richedit.h>
 
+#include <algorithm>
 #include <atomic>
 #include <new>
 #include <string>
+#include <string_view>
 
 #include "core/ass_string.h"
 #include "platform/win32/dark_mode.h"
@@ -21,6 +23,10 @@
 #define kBlackFile L"fc-ignore.txt"
 #define kMessageWindowClass L"FontLoaderSubMessageWindow"
 
+static constexpr PCWSTR kFontSettings = L"Software\\Nullpinter\\SubFontLoader";
+static constexpr PCWSTR kRecentFontDirs = L"RecentFontDirectories";
+static constexpr size_t kMaxRecentFontDirs = 10;
+
 static DWORD WINAPI app_worker(LPVOID param);
 static void AppStopCacheWorker(FL_AppCtx *c);
 static void AppPrepareDuplicateFonts(FL_AppCtx *c);
@@ -33,6 +39,125 @@ static LRESULT CALLBACK DoneDialogSubclassProc(
     LPARAM lParam,
     UINT_PTR uIdSubclass,
     DWORD_PTR dwRefData);
+
+static bool AppIsFontDirectory(PCWSTR path) {
+  const DWORD attributes = GetFileAttributesW(path);
+  return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+static std::vector<std::wstring> AppReadRecentFontDirs() {
+  // Registry entries are ordered from most to least recently used.
+  DWORD bytes = 0;
+  if (RegGetValueW(HKEY_CURRENT_USER, kFontSettings, kRecentFontDirs,
+          RRF_RT_REG_MULTI_SZ, nullptr, nullptr, &bytes) != ERROR_SUCCESS ||
+      bytes > (kMaxRecentFontDirs * 32768 + 1) * sizeof(wchar_t))
+    return {};
+  std::vector<wchar_t> data(bytes / sizeof(wchar_t) + 2);
+  if (RegGetValueW(HKEY_CURRENT_USER, kFontSettings, kRecentFontDirs,
+          RRF_RT_REG_MULTI_SZ, nullptr, data.data(), &bytes) != ERROR_SUCCESS)
+    return {};
+
+  // The extra terminators also bound reading a malformed value.
+  std::vector<std::wstring> dirs;
+  for (PCWSTR path = data.data(); *path && dirs.size() < kMaxRecentFontDirs;) {
+    dirs.emplace_back(path);
+    path += dirs.back().size() + 1;
+  }
+  return dirs;
+}
+
+static bool AppSameFontDir(std::wstring_view left, std::wstring_view right) {
+  // Windows paths can differ in case and include an optional trailing separator.
+  while (!left.empty() && left.back() == L'\\')
+    left.remove_suffix(1);
+  while (!right.empty() && right.back() == L'\\')
+    right.remove_suffix(1);
+  return CompareStringOrdinal(left.data(), static_cast<int>(left.size()),
+      right.data(), static_cast<int>(right.size()), TRUE) == CSTR_EQUAL;
+}
+
+static void AppRememberFontDir(FL_AppCtx *c, std::wstring path) {
+  // Read the latest list before promoting the active directory.
+  auto &dirs = c->recent_font_dirs;
+  auto saved = AppReadRecentFontDirs();
+  if (!saved.empty())
+    dirs = std::move(saved);
+  std::erase_if(dirs, [&](const auto &dir) { return AppSameFontDir(dir, path); });
+  dirs.insert(dirs.begin(), path);
+  if (dirs.size() > kMaxRecentFontDirs)
+    dirs.resize(kMaxRecentFontDirs);
+  c->font_path = std::move(path);
+
+  // Persist the entire list as a single, double-null-terminated value.
+  std::wstring data;
+  for (const auto &dir : dirs) {
+    data.append(dir);
+    data.push_back(L'\0');
+  }
+  HKEY key = nullptr;
+  if (RegCreateKeyExW(HKEY_CURRENT_USER, kFontSettings, 0, nullptr, 0,
+          KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) {
+    SPDLOG_WARN("Could not save recent font directories");
+    return;
+  }
+  if (RegSetValueExW(key, kRecentFontDirs, 0, REG_MULTI_SZ,
+          reinterpret_cast<const BYTE *>(data.c_str()),
+          static_cast<DWORD>((data.size() + 1) * sizeof(wchar_t))) != ERROR_SUCCESS)
+    SPDLOG_WARN("Could not save recent font directories");
+  RegCloseKey(key);
+}
+
+static std::wstring AppDefaultFontDir(const std::wstring &exe) {
+  // Use the caller's working directory, falling back to the executable directory.
+  const DWORD size = GetCurrentDirectoryW(0, nullptr);
+  if (size) {
+    std::wstring path(size, L'\0');
+    const DWORD length = GetCurrentDirectoryW(size, path.data());
+    if (length && length < size) {
+      path.resize(length);
+      return path;
+    }
+  }
+  return exe.substr(0, exe.find_last_of(L'\\') + 1);
+}
+
+static void AppRestoreFontDir(FL_AppCtx *c) {
+  // The explicit compatibility switch keeps the executable-based library.
+  if (c->force_old_ui) {
+    c->font_path = MOCK_FONT_PATH != nullptr ? MOCK_FONT_PATH : c->full_exe_path;
+    DeleteMenu(GetSubMenu(c->btn_menu, 0), 0, MF_BYPOSITION);
+    return;
+  }
+
+  // The mock configuration supplies its own library directly.
+  if constexpr (MOCK_FONT_PATH != nullptr) {
+    AppRememberFontDir(c, MOCK_FONT_PATH);
+    return;
+  }
+
+  // A cache in the working directory takes priority over the saved history.
+  auto current = AppDefaultFontDir(c->full_exe_path);
+  auto cache_path = current;
+  if (!cache_path.empty() && cache_path.back() != L'\\')
+    cache_path += L'\\';
+  cache_path += kCacheFile;
+  const DWORD attributes = GetFileAttributesW(cache_path.c_str());
+  if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+    AppRememberFontDir(c, std::move(current));
+    return;
+  }
+
+  // Restore the most recent available directory or seed an empty history.
+  c->recent_font_dirs = AppReadRecentFontDirs();
+  const auto recent = std::find_if(c->recent_font_dirs.begin(), c->recent_font_dirs.end(),
+      [](const auto &path) { return AppIsFontDirectory(path.c_str()); });
+  if (recent == c->recent_font_dirs.end())
+    AppRememberFontDir(c, std::move(current));
+  else if (recent != c->recent_font_dirs.begin())
+    AppRememberFontDir(c, *recent);
+  else
+    c->font_path = *recent;
+}
 
 static std::wstring NormalizeSubtitlePath(const wchar_t *filePath) {
   wchar_t fullPath[MAX_PATH * 2];
@@ -347,7 +472,7 @@ AppFormatStatus(FL_AppCtx *c, wchar_t *buffer, size_t buffer_count) {
       // arguments
       loaded, failed, unmatched, files, faces, subs,
   };
-  AppUiSetStats(c->work_hwnd, {loaded, failed, unmatched, files, faces, subs});
+  AppUiSetStats(c->work_hwnd, {loaded, failed, unmatched, files, faces});
   return FormatMessage(
              FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY,
              ResLoadString(c->hInst, IDS_LOAD_STAT), 0, 0, buffer,
@@ -436,12 +561,30 @@ static int AppBuildMissingText(FL_AppCtx *c) {
   return 1;
 }
 
-static int AppNavigateDone(HWND hWnd, FL_AppCtx *c, int font_changed) {
-  if (AppBuildLog(c)) {
-    c->dlg_done.pszExpandedInformation = c->log.c_str();
-  } else {
-    c->dlg_done.pszExpandedInformation = nullptr;
+static void AppPublishFontResults(HWND window, const FL_LoaderCtx &loader) {
+  // The worker has exited, so its records can be copied directly into the view.
+  std::vector<AppUiFontResult> results;
+  results.reserve(loader.loaded_font.size());
+  for (const auto &match : loader.loaded_font) {
+    AppUiFontResult result{};
+    result.status = (match.flag & FL_LOAD_MISS) ? AppUiFontStatus::Missing
+        : (match.flag & FL_LOAD_ERR) ? AppUiFontStatus::Failed : AppUiFontStatus::Loaded;
+    if (Utf8ToUtf16(match.face.c_str(), &result.name) &&
+        Utf8ToUtf16(match.filename.c_str(), &result.file))
+      results.push_back(std::move(result));
   }
+
+  // Replace the visible results once for each completed operation.
+  AppUiSetFontResults(window, std::move(results));
+}
+
+static int AppNavigateDone(HWND hWnd, FL_AppCtx *c, int font_changed) {
+  // Publish structured rows for WinUI and retain the TaskDialog's text log.
+  if (!AppUiIsModern(hWnd))
+    c->dlg_done.pszExpandedInformation = AppBuildLog(c) ? c->log.c_str() : nullptr;
+  else if (font_changed)
+    AppPublishFontResults(hWnd, c->loader);
+
   AppFormatStatus(c, c->status_txt, _countof(c->status_txt));
   c->dlg_done.pszContent = c->status_txt;
   if (font_changed)
@@ -573,7 +716,8 @@ static DWORD WINAPI app_worker(LPVOID param) {
         c->unload_only = false;
         c->app_state = APP_DONE;
       } else {
-        c->app_state = APP_SCAN_FONT;
+        c->app_state = c->font_path_changed ? APP_LOAD_CACHE : APP_SCAN_FONT;
+        c->font_path_changed = false;
       }
       SPDLOG_INFO("APP_UNLOAD_FONT done");
       break;
@@ -1004,14 +1148,99 @@ static void AppPickSubtitles(HWND window, FL_AppCtx *c) {
   AppQueuePaths(c, std::move(paths), window);
 }
 
+static void AppSwitchFontDir(HWND window, FL_AppCtx *c, std::wstring path) {
+  // Leave the old loader path intact until the worker has unloaded its fonts.
+  if (c->force_old_ui || c->app_state != APP_DONE || AppSameFontDir(path, c->font_path) ||
+      !AppIsFontDirectory(path.c_str()))
+    return;
+  AppRememberFontDir(c, std::move(path));
+  AppUiSetLibraryPath(window, c->font_path);
+  AppUiSetFontResults(window, {});
+
+  // Reuse the rescan flow and look for a cache in the newly selected directory.
+  DragAcceptFiles(window, FALSE);
+  SetEvent(c->evt_stop_cache);
+  c->font_path_changed = true;
+  c->app_state = APP_UNLOAD_FONT;
+  AppUiNavigate(window, &c->dlg_work);
+}
+
+static void AppPickFontDir(HWND window, FL_AppCtx *c) {
+  // Use the filesystem folder picker available on Windows 7.
+  IFileOpenDialog *picker = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+          IID_IFileOpenDialog, reinterpret_cast<void **>(&picker))))
+    return;
+  DWORD options = 0;
+  picker->lpVtbl->GetOptions(picker, &options);
+  picker->lpVtbl->SetOptions(picker, options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR);
+  picker->lpVtbl->SetTitle(picker, ResLoadString(c->hInst, IDS_PICK_FONT_DIR));
+
+  // Open at the active directory and copy the result before starting the worker.
+  IShellItem *item = nullptr;
+  if (SUCCEEDED(SHCreateItemFromParsingName(c->font_path.c_str(), nullptr, IID_IShellItem,
+          reinterpret_cast<void **>(&item)))) {
+    picker->lpVtbl->SetFolder(picker, item);
+    item->lpVtbl->Release(item);
+  }
+  std::wstring path;
+  if (SUCCEEDED(picker->lpVtbl->Show(picker, window)) &&
+      SUCCEEDED(picker->lpVtbl->GetResult(picker, &item))) {
+    PWSTR value = nullptr;
+    if (SUCCEEDED(item->lpVtbl->GetDisplayName(item, SIGDN_FILESYSPATH, &value))) {
+      path.assign(value);
+      CoTaskMemFree(value);
+    }
+    item->lpVtbl->Release(item);
+  }
+  picker->lpVtbl->Release(picker);
+  if (!path.empty())
+    AppSwitchFontDir(window, c, std::move(path));
+}
+
+static void AppUpdateFontDirMenu(FL_AppCtx *c) {
+  // The localized submenu has one fixed command followed by the recent folders.
+  HMENU submenu = GetSubMenu(GetSubMenu(c->btn_menu, 0), 0);
+  if (!submenu)
+    return;
+  for (int i = GetMenuItemCount(submenu) - 1; i >= 1; --i)
+    DeleteMenu(submenu, i, MF_BYPOSITION);
+  if (!c->recent_font_dirs.empty())
+    AppendMenuW(submenu, MF_SEPARATOR, 0, nullptr);
+
+  // Escape accelerators so literal ampersands in folder names are preserved.
+  for (size_t i = 0; i < c->recent_font_dirs.size(); ++i) {
+    const auto &dir = c->recent_font_dirs[i];
+    std::wstring label;
+    for (const auto ch : dir) {
+      if (ch == L'&')
+        label.push_back(ch);
+      label.push_back(ch);
+    }
+    AppendMenuW(submenu, MF_STRING | (AppSameFontDir(dir, c->font_path) ? MF_CHECKED : 0),
+        ID_BTN_RECENT_FONT_DIR + i, label.c_str());
+  }
+}
+
 static HRESULT CALLBACK DlgDoneButtonDispatch(
     HWND hWnd,
     UINT uNotification,
     WPARAM wParam,
     LPARAM lParam,
     FL_AppCtx *c) {
+  // Recent-folder command IDs hold indices into the menu's directory snapshot.
+  if (wParam >= ID_BTN_RECENT_FONT_DIR &&
+      wParam - ID_BTN_RECENT_FONT_DIR < c->recent_font_dirs.size()) {
+    AppSwitchFontDir(hWnd, c, c->recent_font_dirs[wParam - ID_BTN_RECENT_FONT_DIR]);
+    return S_FALSE;
+  }
+
   // all return S_FALSE: never close dialog
   switch (wParam) {
+  case ID_BTN_PICK_FONT_DIR:
+    if (!c->force_old_ui)
+      AppPickFontDir(hWnd, c);
+    return S_FALSE;
   case ID_BTN_ADD_SUBS:
     AppPickSubtitles(hWnd, c);
     return S_FALSE;
@@ -1113,6 +1342,7 @@ static HRESULT CALLBACK DlgDoneProc(
           CreateThread(nullptr, 0, AppCacheWorker, c, 0, &thread_id);
     }
 
+    AppUpdateFontDirMenu(c);
     AppUiSetMenu(hWnd, GetSubMenu(c->btn_menu, 0));
 
     // find the "Menu" button
@@ -1305,10 +1535,8 @@ static int AppInit(FL_AppCtx *c, HINSTANCE hInst, allocator_t *alloc) {
   }
   c->log.clear();
   c->loaded_subs.clear();
-  c->font_path = c->full_exe_path;
-
-  if (MOCK_FONT_PATH != NULL)
-    c->font_path.assign(nullptr);
+  c->font_path_changed = false;
+  AppRestoreFontDir(c);
 
   c->evt_stop_cache = CreateEvent(nullptr, TRUE, FALSE, nullptr);
   if (c->evt_stop_cache == nullptr) {
@@ -1343,7 +1571,7 @@ static int AppRun(FL_AppCtx *c) {
 
   AppUiRun(&c->dlg_work, c->force_old_ui, [c](std::vector<std::wstring> paths) {
     AppQueuePaths(c, std::move(paths), c->work_hwnd);
-  });
+  }, c->font_path);
 
   // clean up
   if (WaitForSingleObject(c->thread_load, 16384) == WAIT_TIMEOUT) {

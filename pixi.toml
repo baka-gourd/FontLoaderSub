@@ -6,6 +6,10 @@ platforms = ["win-64"]
 version = "2.0.0"
 preview = ["pixi-build"]
 
+# MSVC 14.44 keeps the static standard library compatible with Windows 7.
+[activation.env]
+VCToolsVersion = "14.44"
+
 [pypi-options]
 index-url = "https://pypi.org/simple"
 
